@@ -1,0 +1,150 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html lang="en">
+<head>
+	<title>Advanced Labs Error Page</title>
+	<script>window.dataLayer = window.dataLayer || [];  window.dataLayer.push({ 'page_type':null });	window.dataLayer.push({ 'user_id':null }); (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','GTM-PJ9N8DM');</script>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<meta http-equiv="Content-Language" content="en" />
+	<meta name="MSSmartTagsPreventParsing" content="TRUE" />
+	<meta name="Rating" content="General" />
+	<meta name="Organization" content="ComPADRE Digital Library" />
+	<meta name="Creator" content="ComPADRE Digital Library" />
+	<meta name="Copyright" content="&copy;2007-2026 ComPADRE.org" />
+	<link rel="shortcut icon" href="/services/images/ico/advlabs32.ico">
+	<link href="/advlabs/style.css" type="text/css" rel="stylesheet" />
+	
+</head>
+<body >
+	<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-PJ9N8DM" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript> 
+	<span class="hidden"><a href="#content" class="skip_navigation">Skip to Page Content</a></span>
+	<div id="header">
+		<h1><a href="/advlabs/"><img src="/advlabs/images/hdrLogo.gif" width="265" height="78" alt="AAPT Advanced Labs Website" /></a></h1>
+		<div class="headerLinks">
+			
+				<a href="/advlabs/user/Login.cfm">login</a> - <a href="/advlabs/user/Add.cfm">create an account</a>
+			
+		</div>
+		<div id="searchNav">
+			<form name="simplesearch" action="/advlabs/search/search.cfm" method="post">
+				<input type="hidden" name="Search" value="1" />
+				<label for="searchstring" class="hidden">AAPT Advanced Labs Search:</label>
+				<script type="text/javascript"><!--
+					document.write('<input class="textInput" type="text" name="searchstring" onfocus="if(this.value==\'Search the Library...\')this.value=\'\';" value="Search the Library..." />');
+				--></script>
+				<noscript><input class="textInput" type="text" name="searchstring" value="" /></noscript>
+				
+				<input class="submitInput" type="submit" value="Search" style="background:#EEEEEE;" />
+			</form>
+			
+			<form name="advancedsearch" action="/advlabs/search/advanced.cfm" method="get">
+				<input class="submitInput" type="submit" value="Advanced" title="Advanced Search" style="background:#CCC;" />
+			</form>
+		</div>		
+	</div>
+	<div id="nav"><ul>
+			<li><a class="first" href="/advlabs/">Home</a></li
+			><li><a href="/advlabs/search/launchpad.cfm?ex=Manuals">Lab&nbsp;Manuals</a></li
+			><li><a href="/advlabs/search/launchpad.cfm?ex=Software">Software</a></li
+			><li><a href="/advlabs/search/launchpad.cfm?ex=Supplements">Supplements</a></li
+			><li><a href="/advlabs/wiki/ALPhA_Laboratory_Immersions">ALPhA&nbsp;Lab&nbsp;Immersions</a></li
+			><li><a href="/advlabs/bulletinboard/home.cfm">Forums</a></li
+			><li><a href="/advlabs/conferences/">Conferences</a></li
+			><li><a href="/advlabs/webdocs/ALPhA.cfm">ALPhA</a></li
+			><li><a href="http://mail.aapt.org/read/?forum=advlabs-l">Listserv</a></li
+			><li><a href="/advlabs/webdocs/About.cfm">About</a></li>
+	</ul></div>
+
+	<table id="contentContainer">
+		<tr>
+			
+			<td id="content">
+				
+					<div class="breadcrumbs">
+						&#187; <a href="/advlabs/">home</a>
+						
+							&#187;
+							Error 
+					</div>
+				
+
+<h2>404 Error - Page Not Found</h2>
+
+
+		<h3>Unfortunately, the page you are looking for is not on this server!</h3>
+		<p>This is most commonly due to either a misspelled or out-of-date link.</p>
+		<p>To find the page you are looking for, try visiting the <a href="https://advlabs.aapt.org/">Advanced Labs homepage</a> or using <a href="https://advlabs.aapt.org/search/advanced.cfm">our search</a>.</p>
+					</td>
+		</tr>
+	</table>
+	<table class="footer" summary="The footer contains links to the Advanced Labs contributors and Additional Information about the Advanced Labs Website">
+		<tr><td colspan="3"><hr /></td></tr>
+		<tr class="cbar">
+			<td width="34" class="deBoMP">
+				<a href="https://www.compadre.org/"><img src="/advlabs/images/footerCompadreMini.gif" width="34" height="30" alt="ComPADRE.org" /></a>
+			</td>
+			<td>
+				brought to you by the <a href="https://www.aapt.org/">AAPT</a> and <a href="https://www.nsf.gov/">NSF</a><br/>
+				a member of the comPADRE Digital Library<br />
+			</td>
+			<td style="text-align:right;">
+				&copy;2007-2026, <a href="/advlabs/webdocs/terms.cfm">All Rights Reserved</a><br />
+				<a href="/advlabs/user/contact.cfm"><strong>contact Advanced Labs</strong></a><br />
+			</td>
+		</tr>
+		<tr>
+			<td>&nbsp;</td>
+			<td>
+				<form name="CCollections" id="CCollections" action="/services/cchoice.cfm" method="get">
+	<label for="CChoice" class="explanation">browse the</label>
+	<select name="CChoice" id="CChoice">
+		<option value="portal">comPADRE Collections</option>
+		<optgroup label="For Teachers" class="opt2">
+			<option value="PSRC">PSRC</option>
+			<option value="Precollege">Physics Front</option>
+		</optgroup>
+		<optgroup label="For Faculty - General" class="opt1">
+			<option value="OSP">OSP</option>
+			<option value="PSRC">PSRC</option>
+			<option value="PhysPort">PhysPort</option>
+			<option value="PER">PER-Central</option>
+			<option value="PICUP">PICUP</option>
+			
+		</optgroup>
+		<optgroup label="For Faculty - Courses" class="opt2">
+			<option value="AdvLabs">Advanced Labs</option>
+			<option value="IntroPhys">Physics Source</option>
+			<option value="Quantum">Quantum Exchange</option>
+			<option value="Relativity">Spacetime Emporium</option>
+			<option value="STP">STP</option>
+		</optgroup>
+	</select><input class="submitInput" type="submit" value="Go&#187;" />
+</form>
+			</td>
+			<td style="text-align:right;">
+				<a href="/advlabs/webdocs/About.cfm">about</a> - 
+				<a href="/advlabs/webdocs/Disclaimer.cfm">disclaimer</a> -
+				<a href="/advlabs/webdocs/Terms.cfm">terms</a> - 
+				<a href="/advlabs/webdocs/Privacy.cfm">privacy</a> - 
+				<a href="/advlabs/webdocs/FAQ.cfm">faq</a> -
+				<a href="/advlabs/webdocs/Sitemap.cfm">sitemap</a>
+			</td>
+		</tr>
+		<tr>
+			<td style="text-align:center;" class="deBoMP" colspan="3">
+				<a href="https://www.compadre.org/"><img src="/services/images/footercompadre.gif" alt="ComPADRE Logo" /></a>
+				<a href="https://www.aapt.org/"><img src="/services/images/footeraapt.gif" alt="AAPT Logo" /></a>
+				<a href="https://www.nsf.gov/"><img src="/services/images/footernsf.gif" alt="NSF Logo" /></a>
+			</td>
+		</tr>
+	</table>
+	
+	<script type="text/javascript">
+		var _gaq = _gaq || []; _gaq.push(['_setAccount','UA-852193-1'],['_setDomainName','none'],['_setAllowHash',false],['_setSessionCookieTimeout',3600000],['_trackPageview','/www/advlabs/bfy/files/experiment_6.pdf/404.cfm/'],['b._setAccount', 'UA-10830481-1'],['b._trackPageview']);
+		(function() { var ga=document.createElement('script'); ga.type='text/javascript'; ga.async=true; ga.src=('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js'; var s=document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga,s); })();
+	</script>
+
+</body>
+</html>
+
