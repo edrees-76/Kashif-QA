@@ -1,0 +1,12 @@
+PyQt6==6.10.1
+pyqtgraph==0.14.0
+matplotlib==3.11.2
+pydantic==2.12.5
+argon2-cffi==25.1.0
+reportlab==4.4.10
+arabic-reshaper==3.0.0
+python-bidi==0.6.7
+openpyxl==3.1.5
+pytest==9.0.3
+pytest-qt==4.5.0
+pytest-cov==7.1.0
