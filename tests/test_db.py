@@ -337,4 +337,6 @@ def test_main_window_smoke_qt(qtbot, db_conn):
     assert "KASHIF-QA" in window.windowTitle()
     assert window.lbl_db_status.text().startswith("🟢")
     assert "سليم" in window.lbl_audit_status.text()
+    window._is_logging_out = True
+
 

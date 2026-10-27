@@ -94,16 +94,24 @@ class FirstAdminDialog(QDialog):
         form.addRow("تأكيد كلمة المرور:", self.edit_pw2)
         layout.addLayout(form)
 
+        # Clear any error message whenever user types
+        self.edit_user.textChanged.connect(lambda: self.lbl_error.setText(""))
+        self.edit_name.textChanged.connect(lambda: self.lbl_error.setText(""))
+        self.edit_pw1.textChanged.connect(lambda: self.lbl_error.setText(""))
+        self.edit_pw2.textChanged.connect(lambda: self.lbl_error.setText(""))
+
         hint = QLabel(f"• الحد الأدنى لكلمة المرور: {MIN_PASSWORD_LENGTH} أحرف.")
         hint.setProperty("class", "hint")
         layout.addWidget(hint)
 
-        self.lbl_error = QLabel()
+        self.lbl_error = QLabel("")
         self.lbl_error.setProperty("class", "error-text")
         layout.addWidget(self.lbl_error)
 
         # Buttons
         self.btn_submit = QPushButton("إنشاء الحساب ومتابعة التهيئة")
+        self.btn_submit.setAutoDefault(False)
+        self.btn_submit.setDefault(False)
         self.btn_submit.clicked.connect(self._handle_submit)
         layout.addWidget(self.btn_submit)
 
@@ -113,13 +121,14 @@ class FirstAdminDialog(QDialog):
         pw1 = self.edit_pw1.text()
         pw2 = self.edit_pw2.text()
 
-        if not user or not name:
+        if not user or not name or not pw1 or not pw2:
             self.lbl_error.setText("يرجى ملء كافة الحقول المطلوبة.")
             return
 
         if len(pw1) < MIN_PASSWORD_LENGTH:
             self.lbl_error.setText(f"كلمة المرور قصيرة جداً (الحد الأدنى {MIN_PASSWORD_LENGTH} أحرف).")
             return
+
 
         if pw1 != pw2:
             self.lbl_error.setText("كلمتا المرور غير متطابقتين.")
@@ -181,7 +190,7 @@ class MasterRecoveryKeyDialog(QDialog):
         edit_key.setReadOnly(True)
         edit_key.setProperty("class", "key-field")
         self.btn_copy = QPushButton("نسخ")
-        self.btn_copy.setFixedWidth(70)
+        self.btn_copy.setMinimumWidth(96)
         self.btn_copy.clicked.connect(lambda: self._copy(self.btn_copy))
         key_row.addWidget(edit_key)
         key_row.addWidget(self.btn_copy)
@@ -224,6 +233,7 @@ class LoginDialog(QDialog):
         self.conn = conn
         self.session: Optional[Session] = None
         self._settings = QSettings("KashifNuclear", "KASHIF-QA")
+        self._is_closing: bool = False
 
         self.setWindowTitle("تسجيل الدخول — منظومة كاشف")
         self.setMinimumWidth(440)
@@ -330,8 +340,51 @@ class LoginDialog(QDialog):
         except Exception as e:
             self.lbl_error.setText(f"خطأ غير متوقع: {str(e)}")
 
+    def accept(self) -> None:
+        """Mark as closing and accept dialog upon successful login."""
+        self._is_closing = True
+        super().accept()
+
+    def closeEvent(self, event) -> None:
+        """Prompt confirmation when user clicks X on Login screen to terminate application."""
+        if self._is_closing or self.result() == QDialog.DialogCode.Accepted:
+            event.accept()
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "تأكيد الخروج",
+            "هل تريد إغلاق المنظومة وإنهاء البرنامج؟",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._is_closing = True
+            event.accept()
+        else:
+            event.ignore()
+
+    def reject(self) -> None:
+        """Handle Cancel or ESC on Login screen with confirmation before rejecting."""
+        if self._is_closing:
+            super().reject()
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "تأكيد الخروج",
+            "هل تريد إغلاق المنظومة وإنهاء البرنامج؟",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._is_closing = True
+            super().reject()
+
+
 
 class ChangePasswordDialog(QDialog):
+
     """Forced password change dialog (used when must_change_password=True)."""
 
     def __init__(self, conn: sqlite3.Connection, user_id: int, username: str, parent=None):

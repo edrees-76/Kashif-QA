@@ -12,10 +12,12 @@ from typing import Callable, Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QStatusBar,
@@ -28,7 +30,7 @@ from kashif.gui.bidi import format_mixed_text
 from kashif.gui.idle_lock import IdleLock
 from kashif.gui.theme import COLORS, get_stylesheet, logo_file, set_mode
 from kashif.gui.views.users_view import UsersManagementDialog
-from kashif.services.audit_service import verify_audit_chain
+from kashif.services.audit_service import record_audit_event, verify_audit_chain
 from kashif.services.session import Session
 
 
@@ -47,6 +49,7 @@ class MainWindow(QMainWindow):
         self.on_logout_callback = on_logout
         self.current_theme = "light"
         self.idle_lock: Optional[IdleLock] = None
+        self._is_logging_out: bool = False
 
         self.setWindowTitle(f"كاشف — منظومة ضبط الجودة واعتماد الكواشف الإشعاعية (KASHIF-QA) v{__version__}")
         self.resize(1200, 800)
@@ -285,11 +288,83 @@ class MainWindow(QMainWindow):
         dlg = UsersManagementDialog(conn=self.db_conn, session=self.session, parent=self)
         dlg.exec()
 
+    def close_secondary_windows(self) -> None:
+        """Close all open secondary dialogs and child windows without prompting for save.
+        
+        Traverses top-level widgets in reverse order to close deepest child dialogs first.
+        """
+        app = QApplication.instance()
+        if not app:
+            return
+        widgets = app.topLevelWidgets()
+        for w in reversed(widgets):
+            if w is self or not w.isVisible():
+                continue
+            try:
+                w.close()
+            except Exception:
+                pass
+
+    def closeEvent(self, event) -> None:
+        """Prompt confirmation when user clicks X or when close() is invoked."""
+        if self._is_logging_out:
+            event.accept()
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "تأكيد الخروج",
+            "هل تريد الخروج من المنظومة؟",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            event.ignore()
+            return
+
+        self._execute_logout()
+        event.accept()
+
     def handle_logout(self) -> None:
-        """Close the window and trigger the logout callback to return to login."""
+        """Triggered by logout button. Invokes window close which handles confirmation."""
         self.close()
+
+    def _execute_logout(self) -> None:
+        """Execute orderly logout: stop idle timer, close secondary windows, log audit, clear session."""
+        if self._is_logging_out:
+            return
+        self._is_logging_out = True
+
+        # 1. Stop idle lock timer
+        if hasattr(self, "idle_lock") and self.idle_lock and hasattr(self.idle_lock, "timer"):
+            self.idle_lock.timer.stop()
+
+        # 2. Close all secondary windows without save prompt
+        self.close_secondary_windows()
+
+        # 3. Record LOGOUT audit event if session is present
+        if self.db_conn and self.session:
+            try:
+                record_audit_event(
+                    conn=self.db_conn,
+                    action="LOGOUT",
+                    user_id=self.session.user_id,
+                    entity_type="USER",
+                    entity_id=self.session.user_id,
+                    new_value={"event": "USER_LOGOUT", "username": self.session.username},
+                    commit=True,
+                )
+            except Exception:
+                pass
+
+        # 4. Clear session from memory
+        self.session = None
+
+        # 5. Trigger logout callback (returns to login screen in run.py)
         if self.on_logout_callback:
             self.on_logout_callback()
+
 
     def _check_system_health(self) -> None:
         """Verify DB connectivity and audit chain health on launch."""

@@ -184,10 +184,28 @@ QLineEdit:focus, QTextEdit:focus, QComboBox:focus {{
     border: 2px solid {COLORS["teal"]};
 }}
 
-QComboBox::drop-down {{
-    border: none;
-    padding-left: 8px;
+QComboBox {{
+    padding-left: 28px;
+    padding-right: 12px;
 }}
+
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top left;
+    width: 24px;
+    border: none;
+    background: transparent;
+}}
+
+QComboBox::down-arrow {{
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 6px solid {COLORS["light_slate"]};
+    width: 0px;
+    height: 0px;
+}}
+
 
 QTableWidget {{
     background-color: #FFFFFF;
@@ -334,6 +352,29 @@ QLineEdit, QTextEdit, QComboBox {{
 QLineEdit:focus, QTextEdit:focus, QComboBox:focus {{
     border: 2px solid {COLORS["dark_teal"]};
 }}
+
+QComboBox {{
+    padding-left: 28px;
+    padding-right: 12px;
+}}
+
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top left;
+    width: 24px;
+    border: none;
+    background: transparent;
+}}
+
+QComboBox::down-arrow {{
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 6px solid {COLORS["dark_slate"]};
+    width: 0px;
+    height: 0px;
+}}
+
 
 QFrame.card {{
     background-color: {COLORS["dark_card"]};
