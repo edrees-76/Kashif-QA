@@ -1,12 +1,13 @@
 """Main application window for KASHIF-QA.
 
 Displays institutional seal logo, system status badges, version info,
-and database connection status bar in a modern dark laboratory aesthetic.
+active session details, and Role-Based Access Control actions.
+Supports dynamic switching between Light (default) and Dark themes.
 """
 
 import os
 import sqlite3
-from typing import Optional
+from typing import Callable, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QPixmap
@@ -23,164 +24,222 @@ from PyQt6.QtWidgets import (
 )
 
 from kashif import __version__
-from kashif.gui.theme import LAB_DARK_QSS
+from kashif.gui.bidi import format_mixed_text
+from kashif.gui.idle_lock import IdleLock
+from kashif.gui.theme import COLORS, get_stylesheet, logo_file, set_mode
+from kashif.gui.views.users_view import UsersManagementDialog
 from kashif.services.audit_service import verify_audit_chain
+from kashif.services.session import Session
 
 
 class MainWindow(QMainWindow):
-    """KASHIF-QA primary desktop window."""
+    """KASHIF-QA primary desktop window with session and role awareness."""
 
-    def __init__(self, db_conn: Optional[sqlite3.Connection] = None):
+    def __init__(
+        self,
+        db_conn: Optional[sqlite3.Connection] = None,
+        session: Optional[Session] = None,
+        on_logout: Optional[Callable[[], None]] = None,
+    ):
         super().__init__()
         self.db_conn = db_conn
-        
+        self.session = session
+        self.on_logout_callback = on_logout
+        self.current_theme = "light"
+        self.idle_lock: Optional[IdleLock] = None
+
         self.setWindowTitle(f"كاشف — منظومة ضبط الجودة واعتماد الكواشف الإشعاعية (KASHIF-QA) v{__version__}")
-        self.resize(1180, 780)
-        self.setMinimumSize(960, 640)
-        
+        self.resize(1200, 800)
+        self.setMinimumSize(980, 680)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
         self._init_ui()
         self._check_system_health()
 
+        # Attach Idle Lock if DB and session are present
+        if self.db_conn and self.session:
+            self.idle_lock = IdleLock(window=self, conn=self.db_conn, minutes=15)
+
     def _init_ui(self) -> None:
         """Initialize UI components and layout."""
-        self.setStyleSheet(LAB_DARK_QSS)
-        
+        set_mode(self.current_theme)
+        self.setStyleSheet(get_stylesheet(self.current_theme))
+
         # Central widget with scroll area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.setCentralWidget(scroll)
-        
+
         container = QWidget()
         scroll.setWidget(container)
-        
+
         main_layout = QVBoxLayout(container)
-        main_layout.setContentsMargins(32, 24, 32, 24)
-        main_layout.setSpacing(20)
-        
-        # 1. Header with Official Logo & Titles
+        main_layout.setContentsMargins(32, 20, 32, 24)
+        main_layout.setSpacing(18)
+
+        # 1. Top Action & Navigation Bar
+        top_bar = QHBoxLayout()
+        top_bar.setSpacing(12)
+
+        # User indicator pill
+        user_name = self.session.full_name if self.session else "غير مسجل"
+        user_role = self.session.role if self.session else "—"
+        self.lbl_user_badge = QLabel(f"👤 {user_name} | الرتبة: {user_role}")
+        self.lbl_user_badge.setProperty("class", "user-badge")
+        top_bar.addWidget(self.lbl_user_badge)
+
+        top_bar.addStretch()
+
+        # Users Management button (ADMIN only)
+        self.btn_users_mgmt = QPushButton("👥 إدارة المستخدمين")
+        self.btn_users_mgmt.setProperty("class", "secondary")
+        if self.session and self.session.can("manage_users"):
+            self.btn_users_mgmt.setVisible(True)
+            self.btn_users_mgmt.clicked.connect(self._open_users_management)
+        else:
+            self.btn_users_mgmt.setVisible(False)
+        top_bar.addWidget(self.btn_users_mgmt)
+
+        # Theme toggle button
+        self.btn_theme = QPushButton("🌙 الوضع الداكن")
+        self.btn_theme.setProperty("class", "secondary")
+        self.btn_theme.clicked.connect(self._toggle_theme)
+        top_bar.addWidget(self.btn_theme)
+
+        # Logout button
+        self.btn_logout = QPushButton("🚪 تسجيل الخروج")
+        self.btn_logout.setProperty("class", "danger")
+        self.btn_logout.clicked.connect(self.handle_logout)
+        top_bar.addWidget(self.btn_logout)
+
+        main_layout.addLayout(top_bar)
+
+        # 2. Header with Official Logo & Titles
         header_card = QFrame()
         header_card.setProperty("class", "card")
         header_layout = QHBoxLayout(header_card)
-        header_layout.setContentsMargins(20, 20, 20, 20)
+        header_layout.setContentsMargins(20, 18, 20, 18)
         header_layout.setSpacing(24)
-        
+
         # Logo
         logo_label = QLabel()
+        self.logo_label = logo_label
         logo_path = os.path.join(os.path.dirname(__file__), "assets", "kashif_logo.png")
         if os.path.exists(logo_path):
-            pixmap = QPixmap(logo_path)
-            logo_label.setPixmap(pixmap.scaled(130, 130, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            self._apply_logo()
             self.setWindowIcon(QIcon(logo_path))
         else:
             logo_label.setText("⚛️")
-            logo_label.setStyleSheet("font-size: 70px;")
-            
+            logo_label.setStyleSheet("font-size: 60px;")
+
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(logo_label)
-        
-        # Title text block
+
+        # Title text block with BiDi isolation
         title_box = QVBoxLayout()
         title_box.setSpacing(6)
-        
-        app_title = QLabel("منظومة «كاشف» الرقمية لضبط جودة واعتماد الكواشف الإشعاعية")
+
+        app_title = QLabel(format_mixed_text("منظومة «كاشف» الرقمية لضبط جودة واعتماد الكواشف الإشعاعية"))
         app_title.setProperty("class", "title")
-        app_title.setStyleSheet("font-size: 20px; font-weight: bold; color: #00F2FE;")
-        
+
         en_title = QLabel("KASHIF-QA: Nuclear Radiation Detector Quality Assurance & Spectroscopy System")
         en_title.setProperty("class", "subtitle")
-        en_title.setStyleSheet("font-size: 13px; color: #94A3B8;")
-        
-        std_ref = QLabel("المرجعية القياسية: IAEA Procedure Nº MRNI-507 (HPGe) / MRNI-504 (NaI) & TECDOC-1599")
-        std_ref.setStyleSheet("font-size: 12px; color: #64748B;")
-        
+
+        std_ref = QLabel(format_mixed_text(
+            "المرجعية القياسية الدولية: IAEA Procedure Nº MRNI-507 (HPGe) / MRNI-504 (NaI) & TECDOC-1599"
+        ))
+        std_ref.setProperty("class", "hint")
+
         badges_row = QHBoxLayout()
         badges_row.setSpacing(10)
-        
-        v_badge = QLabel(f"الإصدار: v{__version__} (Phase 0: Skeleton)")
-        v_badge.setProperty("class", "badge-cyan")
-        
-        gate_badge = QLabel("بوابة الاعتماد: Gate G1 مُجتازة ✔")
-        gate_badge.setProperty("class", "badge-green")
-        
+
+        v_badge = QLabel(format_mixed_text(f"الإصدار: v{__version__} (Phase 1: Entry & Core)"))
+        v_badge.setProperty("class", "badge-success")
+
+        gate_badge = QLabel("بوابة الاعتماد: Gate G2 مُجتازة بنجاح ✓")
+        gate_badge.setProperty("class", "badge-success")
+
         badges_row.addWidget(v_badge)
         badges_row.addWidget(gate_badge)
         badges_row.addStretch()
-        
+
         title_box.addWidget(app_title)
         title_box.addWidget(en_title)
         title_box.addWidget(std_ref)
         title_box.addLayout(badges_row)
-        
+
         header_layout.addLayout(title_box, stretch=1)
         main_layout.addWidget(header_card)
-        
-        # 2. System Status Overview (Cards Grid)
+
+        # 3. System Status Overview (Cards Grid)
         grid_layout = QHBoxLayout()
         grid_layout.setSpacing(16)
-        
-        # Card 1: Database
+
         card_db = self._create_status_card(
-            title="قاعدة بيانات SQLite",
-            desc="تخزين محلي معزول بنمط الكتابة المسبقة (WAL Mode) لمنع تلف القفل وضمان الأداء الأقصى.",
+            title="قاعدة بيانات SQLite (WAL)",
+            desc="تخزين محلي معزول بنمط الكتابة المسبقة لمنع تلف القفل وتحقيق أعلى استقرار.",
             status_text="🟢 نمط WAL نشط",
-            status_style="color: #10B981; font-weight: bold;"
+            status_style="status-success"
         )
         grid_layout.addWidget(card_db)
-        
-        # Card 2: Cryptographic Audit
+
         card_audit = self._create_status_card(
             title="سجل التدقيق الأمني التشفيري",
-            desc="سلسلة هاش SHA-256 محكمة مع تريجرز SQLite تمنع التعديل والحذف وتضمن عدم القابلية للتزوير.",
-            status_text="🔒 سلسلة الهاش سليمة",
-            status_style="color: #00F2FE; font-weight: bold;"
+            desc="سلسلة هاش SHA-256 مع تريجرز تمنع التعديل والحذف وتأمين معاملات BEGIN IMMEDIATE.",
+            status_text="🔒 سلسلة الهاش سليمة ومحمية",
+            status_style="status-info"
         )
         grid_layout.addWidget(card_audit)
-        
-        # Card 3: Authentication & Security
+
         card_sec = self._create_status_card(
-            title="التوثيق وتشفير كلمات المرور",
-            desc="تجزئة بكلمات سرية بمعيار Argon2id (وبديل PBKDF2 القياسي)، مع مفتاح استعادة رقمي للطوارئ.",
-            status_text="🛡️ Argon2id مفعل",
-            status_style="color: #60A5FA; font-weight: bold;"
+            title="التوثيق وقفل الحساب التلقائي",
+            desc="تجزئة Argon2id/PBKDF2 مع قفل دائم بعد 5 محاولات فاشلة ومفتاح استعادة رئيسي.",
+            status_text="🛡️ الحماية النشطة مفعلة",
+            status_style="status-neutral"
         )
         grid_layout.addWidget(card_sec)
-        
+
         main_layout.addLayout(grid_layout)
-        
-        # 3. Roadmap & Readiness Box
+
+        # 4. Phase 1 Roadmap & Scope Box
         roadmap_card = QFrame()
         roadmap_card.setProperty("class", "card")
         road_layout = QVBoxLayout(roadmap_card)
         road_layout.setSpacing(10)
-        
-        road_title = QLabel("حالة المرحلة الحالية ومسار البناء الفني:")
-        road_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #E2E8F0;")
+
+        road_title = QLabel(format_mixed_text("مسار بناء Phase 1 (الدخول والهوية والنواة الفيزيائية والسجلات):"))
+        road_title.setProperty("class", "h2")
         road_layout.addWidget(road_title)
-        
-        road_desc = QLabel(
-            "• Phase 0 (الحالية): الهيكل العظمي، الأمان الأولي، وتجهيز البيئة (جاهزة لاعتماد G2).\n"
-            "• Phase 1 (التالية): النواة الفيزيائية، محرك قواعد القرار، وسجلات الكواشف والأجهزة والمصادر.\n"
-            "• Phase 2: معالج فحص كواشف الجرمانيوم التفاعلي ذو المراحل الخمس (HPGe Wizard).\n"
-            "• Phase 3: فحص كواشف يوديد الصوديوم (NaI(Tl)) ومحرك تقارير IAEA Annex II بصيغة PDF."
-        )
-        road_desc.setStyleSheet("font-size: 13px; color: #94A3B8; line-height: 1.6;")
+
+        road_desc = QLabel(format_mixed_text(
+            "• الدورة 1 (المنجزة): واجهة الدخول، الجلسات والصلاحيات (Session RBAC)، قفل الخمول، تطبيق الهوية البصرية، وتحقق الخط العربي.\n"
+            "• الدورة 2 (التالية): نماذج Pydantic، الحسابات الفيزيائية لمعايير IAEA، حاسبة الاضمحلال، محرك قواعد القرار، وسجلات الكواشف والمصادر والأجهزة."
+        ))
+        road_desc.setProperty("class", "body")
         road_layout.addWidget(road_desc)
-        
+
         main_layout.addWidget(roadmap_card)
         main_layout.addStretch()
-        
-        # 4. Status Bar
+
+        # 5. Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        
+
         self.lbl_db_status = QLabel("🟢 قاعدة البيانات: متصلة بنجاح")
-        self.lbl_audit_status = QLabel("🔒 سجل التدقيق: سليم ومحمي بالتريجرز")
-        self.lbl_user_status = QLabel("👤 المستخدم: admin (مدير النظام)")
-        
+        self.lbl_audit_status = QLabel("🔒 سجل التدقيق: سليم ومحمي")
+        self.lbl_status_user = QLabel(f"👤 {user_name} ({user_role})")
+
         self.status_bar.addWidget(self.lbl_db_status)
         self.status_bar.addWidget(self.lbl_audit_status)
-        self.status_bar.addPermanentWidget(self.lbl_user_status)
+        self.status_bar.addPermanentWidget(self.lbl_status_user)
+
+    def _apply_logo(self) -> None:
+        """Show the logo variant matching the active theme."""
+        path = logo_file(self.current_theme)
+        if os.path.exists(path):
+            self.logo_label.setPixmap(QPixmap(path).scaled(
+                125, 125, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     def _create_status_card(self, title: str, desc: str, status_text: str, status_style: str) -> QFrame:
         """Create a stylized information card widget."""
@@ -189,22 +248,48 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
-        
-        t_label = QLabel(title)
-        t_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #F8FAFC;")
-        
-        d_label = QLabel(desc)
-        d_label.setStyleSheet("font-size: 12px; color: #94A3B8;")
+
+        t_label = QLabel(format_mixed_text(title))
+        t_label.setProperty("class", "h2")
+
+        d_label = QLabel(format_mixed_text(desc))
+        d_label.setProperty("class", "hint")
         d_label.setWordWrap(True)
-        
+
         s_label = QLabel(status_text)
-        s_label.setStyleSheet(f"font-size: 13px; {status_style}")
-        
+        s_label.setProperty("class", status_style)
+
         layout.addWidget(t_label)
         layout.addWidget(d_label)
         layout.addStretch()
         layout.addWidget(s_label)
         return card
+
+    def _toggle_theme(self) -> None:
+        """Switch between Light (default) and Dark theme modes."""
+        if self.current_theme == "light":
+            self.current_theme = "dark"
+            self.btn_theme.setText("☀️ الوضع الفاتح")
+        else:
+            self.current_theme = "light"
+            self.btn_theme.setText("🌙 الوضع الداكن")
+
+        set_mode(self.current_theme)
+        self.setStyleSheet(get_stylesheet(self.current_theme))
+        self._apply_logo()
+
+    def _open_users_management(self) -> None:
+        """Open the administrative users management dialog."""
+        if not self.db_conn or not self.session:
+            return
+        dlg = UsersManagementDialog(conn=self.db_conn, session=self.session, parent=self)
+        dlg.exec()
+
+    def handle_logout(self) -> None:
+        """Close the window and trigger the logout callback to return to login."""
+        self.close()
+        if self.on_logout_callback:
+            self.on_logout_callback()
 
     def _check_system_health(self) -> None:
         """Verify DB connectivity and audit chain health on launch."""
@@ -212,17 +297,16 @@ class MainWindow(QMainWindow):
             self.lbl_db_status.setText("🔴 قاعدة البيانات: غير متصلة")
             self.lbl_audit_status.setText("⚠️ حالة السجل: مجهولة")
             return
-            
+
         try:
             cursor = self.db_conn.cursor()
             cursor.execute("PRAGMA journal_mode;")
             mode_row = cursor.fetchone()
             mode = mode_row[0].upper() if mode_row else "UNKNOWN"
             cursor.close()
-            
+
             self.lbl_db_status.setText(f"🟢 قاعدة البيانات: متصلة ({mode})")
-            
-            # Verify audit chain
+
             is_valid, _ = verify_audit_chain(self.db_conn)
             if is_valid:
                 self.lbl_audit_status.setText("🔒 سجل التدقيق: سليم ومحمي")

@@ -46,7 +46,13 @@ def record_audit_event(
     new_value: Optional[Any] = None,
     commit: bool = True,
 ) -> int:
-    """Record an immutable, cryptographically chained audit event."""
+    # 0. Acquire immediate exclusive write lock if not already in a transaction
+    if not conn.in_transaction:
+        try:
+            conn.execute("BEGIN IMMEDIATE;")
+        except sqlite3.OperationalError:
+            pass
+
     cursor = conn.cursor()
     
     # 1. Fetch previous row's hash

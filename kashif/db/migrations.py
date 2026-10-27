@@ -81,9 +81,22 @@ def migration_001_initial_core_security(conn: sqlite3.Connection) -> None:
     cursor.close()
 
 
+def migration_002_user_lockout_and_session(conn: sqlite3.Connection) -> None:
+    """Migration 002: Add failed_attempts and locked_until columns to users table for lockout enforcement."""
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(users);")
+    cols = {row["name"] for row in cursor.fetchall()}
+    if "failed_attempts" not in cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0;")
+    if "locked_until" not in cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN locked_until TEXT;")
+    cursor.close()
+
+
 # Registry of migrations: version -> (description, migration_function)
 MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     1: ("Initial schema: users, audit_log with hash-chaining triggers, system_settings", migration_001_initial_core_security),
+    2: ("Add account lockout and session tracking fields to users table", migration_002_user_lockout_and_session),
 }
 
 

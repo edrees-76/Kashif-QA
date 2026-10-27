@@ -1,21 +1,29 @@
-"""Authentication, password hashing, and security services for KASHIF-QA.
+"""Authentication, password hashing, user management, and security services for KASHIF-QA.
 
 Implements Argon2id password hashing (with PBKDF2 fallback),
-immutable audit event logging, and Master Recovery Key management.
+persistent account lockout after 5 consecutive failures,
+and Master Recovery Key management.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import logging
+import math
 import os
+import re
 import secrets
 import sqlite3
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from kashif.services.audit_service import record_audit_event
+from kashif.services.session import ROLES
 
 logger = logging.getLogger(__name__)
+
+MIN_PASSWORD_LENGTH = 10
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES = 5
 
 # Try Argon2id from argon2-cffi
 try:
@@ -36,6 +44,11 @@ except ImportError:
 
 class AuthenticationError(Exception):
     """Raised when authentication fails."""
+    pass
+
+
+class SecurityError(Exception):
+    """Raised for authorization or security violation errors."""
     pass
 
 
@@ -71,7 +84,6 @@ def verify_password(password: str, password_hash: str) -> bool:
         
     if password_hash.startswith("$argon2"):
         if not _ARGON2_AVAILABLE or _hasher is None:
-            # Re-initialize basic hasher if available
             try:
                 from argon2 import PasswordHasher
                 return PasswordHasher().verify(password_hash, password)
@@ -102,49 +114,67 @@ def verify_password(password: str, password_hash: str) -> bool:
     return False
 
 
-def ensure_initial_admin(conn: sqlite3.Connection) -> Optional[Tuple[str, str]]:
-    """Provision the initial admin user and Master Recovery Key if no users exist.
+def validate_password_strength(password: str) -> None:
+    """Validate password against minimum security constraints."""
+    if not password or len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"يجب ألا يقل طول كلمة المرور عن {MIN_PASSWORD_LENGTH} أحرف.")
+
+
+def create_first_admin(
+    conn: sqlite3.Connection,
+    username: str,
+    full_name: str,
+    password: str
+) -> Tuple[sqlite3.Row, str]:
+    """Create the initial administrator account with a user-chosen password.
     
-    Returns (initial_admin_password, master_recovery_key) if provisioned, or None.
-    NEVER hardcodes passwords in code or Git.
+    Generates and returns the Master Recovery Key (shown once).
+    Never writes plaintext credentials to files or logs.
     """
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) as count FROM users;")
     row = cursor.fetchone()
-    
     if row and row["count"] > 0:
         cursor.close()
-        return None
-        
-    # Generate secure random credentials
-    initial_password = os.getenv("KASHIF_INITIAL_ADMIN_PASSWORD") or secrets.token_urlsafe(12)
+        raise ValueError("تم إعداد مدير النظام بالفعل مسبقاً.")
+
+    clean_user = username.strip()
+    clean_name = full_name.strip()
+    if not clean_user:
+        cursor.close()
+        raise ValueError("اسم المستخدم لا يمكن أن يكون فارغاً.")
+    if not clean_name:
+        cursor.close()
+        raise ValueError("الاسم الكامل لا يمكن أن يكون فارغاً.")
+
+    validate_password_strength(password)
+
+    password_hash = hash_password(password)
     recovery_key = secrets.token_hex(32)
-    
-    password_hash = hash_password(initial_password)
     recovery_key_hash = hash_password(recovery_key)
     now_str = datetime.now(timezone.utc).isoformat()
-    
-    # 1. Insert admin user
+
     cursor.execute(
         """
         INSERT INTO users (
             username, password_hash, full_name, role, is_active,
-            must_change_password, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?);
+            must_change_password, failed_attempts, locked_until, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         (
-            "admin",
+            clean_user,
             password_hash,
-            "مدير النظام الافتراضي",
+            clean_name,
             "ADMIN",
             1,
-            1,  # must_change_password = TRUE
+            0,  # Admin chose their own password, so must_change_password = 0
+            0,
+            None,
             now_str,
         ),
     )
     admin_id = cursor.lastrowid
-    
-    # 2. Store Master Recovery Key hash in system_settings
+
     cursor.execute(
         """
         INSERT OR REPLACE INTO system_settings (key, value, updated_at)
@@ -153,19 +183,27 @@ def ensure_initial_admin(conn: sqlite3.Connection) -> Optional[Tuple[str, str]]:
         ("master_recovery_key_hash", recovery_key_hash, now_str),
     )
     cursor.close()
-    
-    # 3. Log audit event
+
     record_audit_event(
         conn=conn,
         action="CREATE",
         user_id=admin_id,
         entity_type="USER",
         entity_id=admin_id,
-        new_value={"username": "admin", "role": "ADMIN", "note": "Initial admin provisioning"},
+        new_value={"username": clean_user, "role": "ADMIN", "note": "Initial administrator setup"},
         commit=True,
     )
-    
-    return initial_password, recovery_key
+
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id = ?;", (admin_id,))
+    admin_row = cursor.fetchone()
+    cursor.close()
+
+    return admin_row, recovery_key
+
+
+# Standard unified generic error message to prevent username enumeration & status leaks
+GENERIC_LOGIN_ERROR = "اسم المستخدم أو كلمة المرور غير صحيحة أو الحساب غير متاح."
 
 
 def authenticate_user(
@@ -173,15 +211,20 @@ def authenticate_user(
     username: str,
     password: str
 ) -> sqlite3.Row:
-    """Authenticate a user by username and password.
+    """Authenticate user with database-persisted lockout after 5 consecutive failures.
     
-    Logs LOGIN on success, FAILED_LOGIN on failure into audit_log.
+    Uses unified generic error message for all failure conditions (user not found,
+    locked account, inactive account, bad password) to prevent enumeration or timing attacks.
+    Specific failure reasons remain strictly in audit_log.
     """
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE username = ?;", (username,))
     user = cursor.fetchone()
     cursor.close()
-    
+
+    now = datetime.now(timezone.utc)
+
+    # 1. Non-existent username
     if user is None:
         record_audit_event(
             conn=conn,
@@ -191,9 +234,42 @@ def authenticate_user(
             new_value={"attempted_username": username, "reason": "User not found"},
             commit=True,
         )
-        raise AuthenticationError("اسم المستخدم أو كلمة المرور غير صحيحة.")
-        
-    if not user["is_active"]:
+        raise AuthenticationError(GENERIC_LOGIN_ERROR)
+
+    user_dict = dict(user)
+
+    # 2. Check if account is currently locked
+    locked_until_str = user_dict.get("locked_until")
+    if locked_until_str:
+        try:
+            locked_dt = datetime.fromisoformat(locked_until_str)
+            if locked_dt > now:
+                remaining_sec = (locked_dt - now).total_seconds()
+                remaining_min = math.ceil(remaining_sec / 60)
+                record_audit_event(
+                    conn=conn,
+                    action="FAILED_LOGIN",
+                    user_id=user["id"],
+                    entity_type="USER",
+                    entity_id=user["id"],
+                    new_value={"reason": "Attempt during account lockout", "remaining_minutes": remaining_min},
+                    commit=True,
+                )
+                raise AuthenticationError(GENERIC_LOGIN_ERROR)
+            else:
+                # Lockout period expired; reset counter
+                conn.execute(
+                    "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?;",
+                    (user["id"],)
+                )
+                conn.commit()
+                user_dict["failed_attempts"] = 0
+                user_dict["locked_until"] = None
+        except (ValueError, TypeError):
+            pass
+
+    # 3. Check if account is deactivated
+    if not user_dict.get("is_active", 1):
         record_audit_event(
             conn=conn,
             action="FAILED_LOGIN",
@@ -203,26 +279,53 @@ def authenticate_user(
             new_value={"attempted_username": username, "reason": "Account inactive"},
             commit=True,
         )
-        raise AuthenticationError("هذا الحساب معطّل. يرجى مراجعة إدارة النظام.")
-        
+        raise AuthenticationError(GENERIC_LOGIN_ERROR)
+
+    # 4. Verify password
     if not verify_password(password, user["password_hash"]):
-        record_audit_event(
-            conn=conn,
-            action="FAILED_LOGIN",
-            user_id=user["id"],
-            entity_type="USER",
-            entity_id=user["id"],
-            new_value={"attempted_username": username, "reason": "Invalid password"},
-            commit=True,
-        )
-        raise AuthenticationError("اسم المستخدم أو كلمة المرور غير صحيحة.")
+        failed_count = (user_dict.get("failed_attempts") or 0) + 1
         
-    # Successful login: update last_login_at
-    now_str = datetime.now(timezone.utc).isoformat()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET last_login_at = ? WHERE id = ?;", (now_str, user["id"]))
-    cursor.close()
-    
+        if failed_count >= MAX_FAILED_ATTEMPTS:
+            locked_time = now + timedelta(minutes=LOCKOUT_MINUTES)
+            conn.execute(
+                "UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?;",
+                (failed_count, locked_time.isoformat(), user["id"])
+            )
+            record_audit_event(
+                conn=conn,
+                action="ACCOUNT_LOCKED",
+                user_id=user["id"],
+                entity_type="USER",
+                entity_id=user["id"],
+                new_value={
+                    "event": "ACCOUNT_LOCKED",
+                    "failed_attempts": failed_count,
+                    "lockout_minutes": LOCKOUT_MINUTES,
+                },
+                commit=True,
+            )
+            raise AuthenticationError(GENERIC_LOGIN_ERROR)
+        else:
+            conn.execute(
+                "UPDATE users SET failed_attempts = ? WHERE id = ?;",
+                (failed_count, user["id"])
+            )
+            record_audit_event(
+                conn=conn,
+                action="FAILED_LOGIN",
+                user_id=user["id"],
+                entity_type="USER",
+                entity_id=user["id"],
+                new_value={"attempt": failed_count, "reason": "Password mismatch"},
+                commit=True,
+            )
+            raise AuthenticationError(GENERIC_LOGIN_ERROR)
+
+    # 5. Successful login: reset failed counters and update last_login_at
+    conn.execute(
+        "UPDATE users SET failed_attempts = 0, locked_until = NULL, last_login_at = ? WHERE id = ?;",
+        (now.isoformat(), user["id"])
+    )
     record_audit_event(
         conn=conn,
         action="LOGIN",
@@ -232,8 +335,7 @@ def authenticate_user(
         new_value={"username": username, "role": user["role"]},
         commit=True,
     )
-    
-    # Return fresh user record
+
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE id = ?;", (user["id"],))
     updated_user = cursor.fetchone()
@@ -244,17 +346,19 @@ def authenticate_user(
 def reset_admin_with_recovery_key(
     conn: sqlite3.Connection,
     recovery_key: str,
-    new_admin_password: str
+    new_admin_password: str,
+    admin_username: Optional[str] = None,
 ) -> bool:
-    """Reset the admin user password using the Master Recovery Key.
+    """Reset an administrator's password using the Master Recovery Key.
     
-    Usage is strictly logged in audit_log.
+    Targets any user account with role='ADMIN' (or specific admin_username).
+    Returns True only if an admin row was actually updated in the database.
     """
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM system_settings WHERE key = 'master_recovery_key_hash';")
     row = cursor.fetchone()
     cursor.close()
-    
+
     if not row or not verify_password(recovery_key, row["value"]):
         record_audit_event(
             conn=conn,
@@ -264,23 +368,257 @@ def reset_admin_with_recovery_key(
             commit=True,
         )
         return False
-        
-    # Reset admin password
+
+    validate_password_strength(new_admin_password)
     new_hash = hash_password(new_admin_password)
-    now_str = datetime.now(timezone.utc).isoformat()
-    
+
     cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET password_hash = ?, must_change_password = 1 WHERE username = 'admin';",
-        (new_hash,)
-    )
+    if admin_username:
+        cursor.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = 1, failed_attempts = 0, locked_until = NULL WHERE username = ? AND role = 'ADMIN';",
+            (new_hash, admin_username)
+        )
+    else:
+        cursor.execute("SELECT id, username FROM users WHERE role = 'ADMIN' ORDER BY id ASC LIMIT 1;")
+        admin_row = cursor.fetchone()
+        if not admin_row:
+            cursor.close()
+            return False
+        cursor.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = 1, failed_attempts = 0, locked_until = NULL WHERE id = ?;",
+            (new_hash, admin_row["id"])
+        )
+
+    updated = cursor.rowcount > 0
     cursor.close()
-    
+
+    if not updated:
+        return False
+
     record_audit_event(
         conn=conn,
         action="UPDATE",
         entity_type="SECURITY",
-        new_value={"event": "ADMIN_PASSWORD_RESET_VIA_MASTER_KEY"},
+        new_value={"event": "ADMIN_PASSWORD_RESET_VIA_MASTER_KEY", "target_admin": admin_username or "FIRST_ADMIN"},
         commit=True,
     )
     return True
+
+
+
+# ----------------------------------------------------------------------
+# Administrative User Management (Restricted strictly to ADMIN role)
+# ----------------------------------------------------------------------
+
+def _require_admin(conn: sqlite3.Connection, operator_user_id: Optional[int]) -> None:
+    """Verify that operator_user_id exists, is active, and possesses the ADMIN role.
+    
+    Raises:
+        PermissionError: If operator does not possess the ADMIN role or is inactive.
+    """
+    if operator_user_id is None:
+        raise PermissionError("مطلوب معرف مسؤول صالح (ADMIN role required).")
+    cursor = conn.cursor()
+    cursor.execute("SELECT role, is_active FROM users WHERE id = ?;", (operator_user_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    if not row or not row["is_active"] or row["role"] != "ADMIN":
+        raise PermissionError("غير مصرح: هذه العملية تتطلب صلاحية مدير النظام (ADMIN).")
+
+
+def list_users(conn: sqlite3.Connection, operator_user_id: Optional[int] = None) -> List[sqlite3.Row]:
+    """Return all users in the system. Requires ADMIN role."""
+    _require_admin(conn, operator_user_id)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, username, full_name, role, is_active, must_change_password,
+               failed_attempts, locked_until, last_login_at, created_at
+        FROM users
+        ORDER BY id ASC;
+        """
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    return rows
+
+
+def list_active_usernames(conn: sqlite3.Connection) -> List[Tuple[str, str]]:
+    """Return list of (username, full_name) for active users."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, full_name FROM users WHERE is_active = 1 ORDER BY username ASC;")
+    rows = cursor.fetchall()
+    cursor.close()
+    return [(r["username"], r["full_name"]) for r in rows]
+
+
+def create_user(
+    conn: sqlite3.Connection,
+    operator_user_id: int,
+    username: str,
+    full_name: str,
+    role: str,
+    password: str,
+    must_change_password: bool = True,
+) -> int:
+    """Create a new user. Strictly restricted to ADMIN role and logged in audit_log."""
+    _require_admin(conn, operator_user_id)
+    if role not in ROLES:
+        raise ValueError(f"الدور غير صالح: {role}")
+    clean_user = username.strip()
+    clean_name = full_name.strip()
+    if not clean_user:
+        raise ValueError("اسم المستخدم لا يمكن أن يكون فارغاً.")
+    if not clean_name:
+        raise ValueError("الاسم الكامل لا يمكن أن يكون فارغاً.")
+
+    validate_password_strength(password)
+
+    # Check username uniqueness
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ?;", (clean_user,))
+    if cursor.fetchone():
+        cursor.close()
+        raise ValueError(f"اسم المستخدم '{clean_user}' مسجل مسبقاً.")
+
+    pw_hash = hash_password(password)
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    cursor.execute(
+        """
+        INSERT INTO users (
+            username, password_hash, full_name, role, is_active,
+            must_change_password, failed_attempts, locked_until, created_at
+        ) VALUES (?, ?, ?, ?, 1, ?, 0, NULL, ?);
+        """,
+        (clean_user, pw_hash, clean_name, role, 1 if must_change_password else 0, now_str),
+    )
+    new_user_id = cursor.lastrowid
+    cursor.close()
+
+    record_audit_event(
+        conn=conn,
+        action="CREATE",
+        user_id=operator_user_id,
+        entity_type="USER",
+        entity_id=new_user_id,
+        new_value={"username": clean_user, "role": role, "full_name": clean_name},
+        commit=True,
+    )
+    return new_user_id
+
+
+def set_user_active_status(
+    conn: sqlite3.Connection,
+    operator_user_id: int,
+    target_user_id: int,
+    is_active: bool,
+) -> None:
+    """Activate or deactivate a user account. Requires ADMIN role.
+    
+    Prevents self-deactivation and deactivating the last active administrator.
+    """
+    _require_admin(conn, operator_user_id)
+    if operator_user_id == target_user_id and not is_active:
+        raise SecurityError("لا يمكنك تعطيل حسابك الشخصي النشط.")
+
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id = ?;", (target_user_id,))
+    target_user = cursor.fetchone()
+    if not target_user:
+        cursor.close()
+        raise ValueError("المستخدم غير موجود.")
+
+    # Guard: prevent deactivating the last active admin
+    if target_user["role"] == "ADMIN" and not is_active:
+        cursor.execute("SELECT COUNT(*) as count FROM users WHERE role = 'ADMIN' AND is_active = 1;")
+        admin_count = cursor.fetchone()["count"]
+        if admin_count <= 1:
+            cursor.close()
+            raise SecurityError("لا يمكن تعطيل المسؤول الوحيد النشط في المنظومة.")
+
+    cursor.execute("UPDATE users SET is_active = ? WHERE id = ?;", (1 if is_active else 0, target_user_id))
+    cursor.close()
+
+    record_audit_event(
+        conn=conn,
+        action="UPDATE",
+        user_id=operator_user_id,
+        entity_type="USER",
+        entity_id=target_user_id,
+        new_value={"is_active": 1 if is_active else 0},
+        old_value={"is_active": target_user["is_active"]},
+        commit=True,
+    )
+
+
+def admin_reset_user_password(
+    conn: sqlite3.Connection,
+    operator_user_id: int,
+    target_user_id: int,
+    new_password: str,
+) -> None:
+    """Reset a user's password by administrator. Requires ADMIN role."""
+    _require_admin(conn, operator_user_id)
+    validate_password_strength(new_password)
+    new_hash = hash_password(new_password)
+
+    cursor = conn.cursor()
+    cursor.execute("SELECT username FROM users WHERE id = ?;", (target_user_id,))
+    user = cursor.fetchone()
+    if not user:
+        cursor.close()
+
+        raise ValueError("المستخدم غير موجود.")
+
+    cursor.execute(
+        "UPDATE users SET password_hash = ?, must_change_password = 1, failed_attempts = 0, locked_until = NULL WHERE id = ?;",
+        (new_hash, target_user_id),
+    )
+    cursor.close()
+
+    record_audit_event(
+        conn=conn,
+        action="UPDATE",
+        user_id=operator_user_id,
+        entity_type="USER",
+        entity_id=target_user_id,
+        new_value={"event": "ADMIN_PASSWORD_RESET", "username": user["username"]},
+        commit=True,
+    )
+
+
+def change_own_password(
+    conn: sqlite3.Connection,
+    user_id: int,
+    old_password: str,
+    new_password: str,
+) -> None:
+    """Change user password, verifying old password and clearing must_change_password."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT password_hash, username FROM users WHERE id = ?;", (user_id,))
+    user = cursor.fetchone()
+    cursor.close()
+
+    if not user or not verify_password(old_password, user["password_hash"]):
+        raise AuthenticationError("كلمة المرور الحالية غير صحيحة.")
+
+    validate_password_strength(new_password)
+    new_hash = hash_password(new_password)
+
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET password_hash = ?, must_change_password = 0, failed_attempts = 0, locked_until = NULL WHERE id = ?;",
+        (new_hash, user_id),
+    )
+    cursor.close()
+
+    record_audit_event(
+        conn=conn,
+        action="UPDATE",
+        user_id=user_id,
+        entity_type="USER",
+        entity_id=user_id,
+        new_value={"event": "PASSWORD_CHANGED", "username": user["username"]},
+        commit=True,
+    )
