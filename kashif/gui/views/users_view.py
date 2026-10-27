@@ -5,7 +5,7 @@ and password reset capabilities with full audit trail logging.
 """
 
 import sqlite3
-from typing import Optional
+from typing import Optional, Tuple
 
 from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt
