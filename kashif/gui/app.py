@@ -48,21 +48,22 @@ def setup_global_exception_handler(app: QApplication) -> None:
             
         print(f"Unhandled exception recorded in {ERROR_LOG_FILENAME}: {exc_type.__name__}: {exc_value}", file=sys.stderr)
         
-        # Display polite dialog to user
-        try:
-            msg_box = QMessageBox()
-            msg_box.setIcon(QMessageBox.Icon.Critical)
-            msg_box.setWindowTitle("تنبيه: حدث خطأ غير متوقع")
-            msg_box.setText("عذراً، حدث خطأ غير متوقع أثناء تشغيل المنظومة.")
-            msg_box.setInformativeText(
-                f"تم تسجيل التفاصيل التقنية للخطأ في ملف السجل:\n{ERROR_LOG_FILENAME}\n\n"
-                f"نوع الخطأ: {exc_type.__name__}"
-            )
-            msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-            msg_box.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-            msg_box.exec()
-        except Exception:
-            pass
+        # Display polite dialog to user (suppressed in automated test environments)
+        if not os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+            try:
+                msg_box = QMessageBox()
+                msg_box.setIcon(QMessageBox.Icon.Critical)
+                msg_box.setWindowTitle("تنبيه: حدث خطأ غير متوقع")
+                msg_box.setText("عذراً، حدث خطأ غير متوقع أثناء تشغيل المنظومة.")
+                msg_box.setInformativeText(
+                    f"تم تسجيل التفاصيل التقنية للخطأ في ملف السجل:\n{ERROR_LOG_FILENAME}\n\n"
+                    f"نوع الخطأ: {exc_type.__name__}"
+                )
+                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg_box.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+                msg_box.exec()
+            except Exception:
+                pass
 
     sys.excepthook = exception_hook
 
@@ -73,6 +74,9 @@ def create_app(argv=None) -> QApplication:
     if app is None:
         app = QApplication(argv or sys.argv)
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    # Fusion + forced light scheme so the OS dark mode never overrides the identity palette
+    app.setStyle("Fusion")
+    app.styleHints().setColorScheme(Qt.ColorScheme.Light)
     app.setApplicationName("KASHIF-QA")
     app.setOrganizationName("Kashif Nuclear Lab Systems")
     setup_global_exception_handler(app)

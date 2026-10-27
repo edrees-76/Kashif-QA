@@ -56,3 +56,7 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 .DS_Store
+
+# Test outputs
+tests/output/
+

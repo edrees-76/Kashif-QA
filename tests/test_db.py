@@ -19,8 +19,9 @@ from kashif.services.audit_service import (
 )
 from kashif.services.security import (
     AuthenticationError,
+    GENERIC_LOGIN_ERROR,
     authenticate_user,
-    ensure_initial_admin,
+    create_first_admin,
     hash_password,
     hash_password_pbkdf2,
     reset_admin_with_recovery_key,
@@ -81,10 +82,11 @@ def test_schema_migrations_runner(temp_db_path):
     """TASK-0.3: Migration engine applies Version 1 and records execution in schema_migrations."""
     conn = create_connection(temp_db_path)
     
-    # First run applies migration 1
+    # First run applies migrations 1 and 2
     applied = apply_migrations(conn)
     assert 1 in applied
-    assert get_applied_migrations(conn) == [1]
+    assert 2 in applied
+    assert get_applied_migrations(conn) == [1, 2]
     
     # Second run is idempotent
     second_run = apply_migrations(conn)
@@ -92,9 +94,14 @@ def test_schema_migrations_runner(temp_db_path):
     
     cursor = conn.cursor()
     cursor.execute("SELECT version, description FROM schema_migrations WHERE version = 1;")
-    row = cursor.fetchone()
-    assert row is not None
-    assert "users, audit_log" in row["description"]
+    row1 = cursor.fetchone()
+    assert row1 is not None
+    assert "users, audit_log" in row1["description"]
+
+    cursor.execute("SELECT version, description FROM schema_migrations WHERE version = 2;")
+    row2 = cursor.fetchone()
+    assert row2 is not None
+    assert "lockout" in row2["description"]
     cursor.close()
     conn.close()
 
@@ -160,11 +167,10 @@ def test_password_hashing_and_verification():
 
 
 def test_initial_admin_provisioning(db_conn):
-    """TASK-0.4: Initial admin is provisioned with must_change_password=True and Master Recovery Key."""
-    creds = ensure_initial_admin(db_conn)
-    assert creds is not None
-    init_pass, recovery_key = creds
-    assert len(init_pass) >= 12
+    """TASK-0.4: Initial admin is provisioned with custom credentials and Master Recovery Key."""
+    init_pass = "MyStrongAdminPassword2026!"
+    admin_row, recovery_key = create_first_admin(db_conn, "admin", "مدير النظام الرئيسي", init_pass)
+    assert admin_row is not None
     assert len(recovery_key) >= 32
     
     # Query admin user
@@ -173,7 +179,6 @@ def test_initial_admin_provisioning(db_conn):
     admin = cursor.fetchone()
     assert admin is not None
     assert admin["role"] == "ADMIN"
-    assert admin["must_change_password"] == 1
     assert verify_password(init_pass, admin["password_hash"]) is True
     
     # Query recovery key hash in system_settings
@@ -183,13 +188,15 @@ def test_initial_admin_provisioning(db_conn):
     assert verify_password(recovery_key, rec_row["value"]) is True
     cursor.close()
     
-    # Calling ensure_initial_admin again does nothing and returns None
-    assert ensure_initial_admin(db_conn) is None
+    # Calling create_first_admin again fails because an admin already exists
+    with pytest.raises(ValueError):
+        create_first_admin(db_conn, "admin2", "مدير آخر", "AnotherPass123!")
 
 
 def test_authentication_and_audit_events(db_conn):
     """TASK-0.4: Authentication flow records LOGIN and FAILED_LOGIN events in audit_log."""
-    init_pass, _ = ensure_initial_admin(db_conn)
+    init_pass = "SecureAdminPass2026!"
+    create_first_admin(db_conn, "admin", "مدير النظام", init_pass)
     
     # 1. Successful authentication
     user = authenticate_user(db_conn, "admin", init_pass)
@@ -225,7 +232,8 @@ def test_authentication_and_audit_events(db_conn):
 
 def test_master_recovery_key_reset(db_conn):
     """TASK-0.4: Master Recovery Key resets admin password and logs audit event."""
-    init_pass, recovery_key = ensure_initial_admin(db_conn)
+    init_pass = "InitialPass2026!"
+    _, recovery_key = create_first_admin(db_conn, "admin", "مدير النظام", init_pass)
     new_admin_pass = "NewMasterPassword2026!"
     
     # 1. Invalid recovery key fails
@@ -293,7 +301,7 @@ def test_inactive_user_authentication_failure(db_conn):
     # Attempt login with valid password but inactive account
     with pytest.raises(AuthenticationError) as exc_info:
         authenticate_user(db_conn, "disabled_user", "SecretPass123!")
-    assert "معطّل" in str(exc_info.value)
+    assert str(exc_info.value) == GENERIC_LOGIN_ERROR
 
     # Verify FAILED_LOGIN audit event recorded with user_id
     cursor = db_conn.cursor()
@@ -330,16 +338,3 @@ def test_main_window_smoke_qt(qtbot, db_conn):
     assert window.lbl_db_status.text().startswith("🟢")
     assert "سليم" in window.lbl_audit_status.text()
 
-
-def test_initial_credentials_dialog_smoke(qtbot):
-    """TASK-0.4 / S2: Smoke test for InitialCredentialsDialog with copy actions."""
-    from kashif.gui.widgets.initial_credentials_dialog import InitialCredentialsDialog
-
-    dialog = InitialCredentialsDialog(admin_password="TestAdminPass123!", recovery_key="abcdef0123456789")
-    qtbot.addWidget(dialog)
-    dialog.show()
-
-    assert "مدير النظام" in dialog.windowTitle()
-    assert dialog.confirmed is False
-    dialog._on_confirm()
-    assert dialog.confirmed is True
