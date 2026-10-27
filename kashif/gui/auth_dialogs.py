@@ -190,7 +190,7 @@ class MasterRecoveryKeyDialog(QDialog):
         edit_key.setReadOnly(True)
         edit_key.setProperty("class", "key-field")
         self.btn_copy = QPushButton("نسخ")
-        self.btn_copy.setFixedWidth(70)
+        self.btn_copy.setMinimumWidth(96)
         self.btn_copy.clicked.connect(lambda: self._copy(self.btn_copy))
         key_row.addWidget(edit_key)
         key_row.addWidget(self.btn_copy)
