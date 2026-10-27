@@ -15,7 +15,8 @@ Covers:
 from datetime import datetime, timedelta, timezone
 import pytest
 from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtGui import QCloseEvent, QKeyEvent
+from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from kashif.gui.bidi import LRI, PDI, format_mixed_text, isolate_ltr
 from kashif.gui.theme import COLORS, calculate_contrast_ratio
@@ -327,6 +328,7 @@ def test_idle_lock_event_filter_and_timeout(qtbot, db_conn):
     lock.minutes = 0
     lock.restart()
     assert not lock.timer.isActive()
+    window._is_logging_out = True
 
 
 def test_login_dialog_comprehensive_flow(qtbot, db_conn):
@@ -397,9 +399,10 @@ def test_first_admin_dialog_validation_and_recovery_dialog(qtbot, db_conn):
     rec_dlg.show()
 
     # Copy action
-    rec_dlg._copy(rec_dlg.btn_confirm)
+    rec_dlg._copy(rec_dlg.btn_copy)
     # Reject in test mode
     rec_dlg.reject()
+
 
 
 def test_change_password_dialog_flow(qtbot, db_conn):
@@ -515,3 +518,161 @@ def test_users_management_dialog_full_flow(qtbot, db_conn, monkeypatch):
     users_dlg._on_reset_pw()
     users_dlg.refresh_users()
 
+
+def test_main_window_close_cancel_keeps_window(qtbot, db_conn, monkeypatch):
+    """Point 1.ز: Answering 'No' to close confirmation ignores closeEvent and keeps window active."""
+    from kashif.gui.main_window import MainWindow
+
+    admin_row, _ = create_first_admin(db_conn, "adm_stay", "مدير البقاء", "AdminStayPass2026!")
+    session = Session.from_row(admin_row)
+
+    window = MainWindow(db_conn=db_conn, session=session)
+    qtbot.addWidget(window)
+    window.show()
+
+    # User answers 'No' to logout/close confirmation
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
+
+    close_ev = QCloseEvent()
+    window.closeEvent(close_ev)
+
+    assert close_ev.isAccepted() is False
+    assert window.session is not None
+    assert window._is_logging_out is False
+    window._is_logging_out = True
+
+
+def test_main_window_logout_closes_secondary_and_logs_audit(qtbot, db_conn, monkeypatch):
+    """Point 1.ز: Answering 'Yes' closes secondary windows without save prompt, clears session, and logs LOGOUT."""
+    from kashif.gui.main_window import MainWindow
+
+    admin_row, _ = create_first_admin(db_conn, "adm_out", "مدير الخروج", "AdminOutPass2026!")
+    session = Session.from_row(admin_row)
+
+    logged_out_called = False
+
+    def on_logout():
+        nonlocal logged_out_called
+        logged_out_called = True
+
+    window = MainWindow(db_conn=db_conn, session=session, on_logout=on_logout)
+    qtbot.addWidget(window)
+    window.show()
+
+    # Open a secondary child dialog
+    sec_dialog = QDialog(window)
+    qtbot.addWidget(sec_dialog)
+    sec_dialog.show()
+    assert sec_dialog.isVisible() is True
+
+    # User answers 'Yes' to logout/close confirmation
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+
+    window.handle_logout()
+
+    # Secondary window closed cleanly without prompting
+    assert sec_dialog.isVisible() is False
+    assert window.session is None
+    assert logged_out_called is True
+    assert window._is_logging_out is True
+
+    # Verify LOGOUT audit event recorded
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT * FROM audit_log WHERE action = 'LOGOUT' AND user_id = ? ORDER BY id DESC LIMIT 1;", (session.user_id,))
+    logout_event = cursor.fetchone()
+    assert logout_event is not None
+    assert "USER_LOGOUT" in logout_event["new_value_json"]
+    cursor.close()
+
+
+def test_login_dialog_close_event_confirmation(qtbot, db_conn, monkeypatch):
+    """Point 1.ز: Clicking X on LoginDialog asks confirmation before terminating application."""
+    from kashif.gui.auth_dialogs import LoginDialog
+
+    create_first_admin(db_conn, "login_chk", "مدير الفحص", "LoginCheck2026!")
+
+    dlg = LoginDialog(conn=db_conn)
+    qtbot.addWidget(dlg)
+    dlg.show()
+
+    # 1. Answering 'No' ignores closeEvent
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
+    ev_no = QCloseEvent()
+    dlg.closeEvent(ev_no)
+    assert ev_no.isAccepted() is False
+
+    # 2. Answering 'Yes' accepts closeEvent
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    ev_yes = QCloseEvent()
+    dlg.closeEvent(ev_yes)
+    assert ev_yes.isAccepted() is True
+    dlg._is_closing = True
+
+
+def test_idle_lock_closes_secondary_without_prompt(qtbot, db_conn, monkeypatch):
+    """Point 1.ز & 1.هـ: Idle timeout closes secondary windows without asking the user."""
+    from kashif.gui.idle_lock import IdleLock, UnlockDialog
+    from kashif.gui.main_window import MainWindow
+
+    admin_row, _ = create_first_admin(db_conn, "adm_idle_sec", "مدير الثانوي", "IdleSecPass2026!")
+    session = Session.from_row(admin_row)
+
+    window = MainWindow(db_conn=db_conn, session=session)
+    qtbot.addWidget(window)
+    window.show()
+
+    sec_dialog = QDialog(window)
+    qtbot.addWidget(sec_dialog)
+    sec_dialog.show()
+    assert sec_dialog.isVisible() is True
+
+    lock = IdleLock(window=window, conn=db_conn, minutes=15)
+    # Bypass blocking modal unlock dialog in test
+    monkeypatch.setattr(UnlockDialog, "exec", lambda self: 0)
+
+    # Trigger idle lock timeout
+    lock._on_timeout()
+
+    # Secondary window closed without prompt
+    assert sec_dialog.isVisible() is False
+    window._is_logging_out = True
+
+
+def test_first_admin_dialog_validation_only_on_submit(qtbot, db_conn):
+    """Point 2: Short password error must NOT appear before or during typing; only after clicking submit."""
+    from kashif.gui.auth_dialogs import FirstAdminDialog
+
+    dlg = FirstAdminDialog(conn=db_conn)
+    qtbot.addWidget(dlg)
+    dlg.show()
+
+    # Initially before typing, error label must be empty
+    assert dlg.lbl_error.text() == ""
+
+    # While typing short password in edit_pw1, error must remain empty
+    dlg.edit_pw1.setText("short")
+    assert dlg.lbl_error.text() == ""
+
+    dlg.edit_pw2.setText("short")
+    assert dlg.lbl_error.text() == ""
+
+    # Only after clicking submit does the validation error appear
+    dlg.btn_submit.click()
+    assert "قصيرة" in dlg.lbl_error.text()
+
+    # Typing again immediately clears the error message
+    dlg.edit_pw1.setText("short1")
+    assert dlg.lbl_error.text() == ""
+
+
+def test_first_admin_dialog_fields_are_visible(qtbot, db_conn):
+    """The form must actually be laid out (fields visible), not only fillable programmatically."""
+    from kashif.gui.auth_dialogs import FirstAdminDialog
+
+    dlg = FirstAdminDialog(conn=db_conn)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    for field in (dlg.edit_user, dlg.edit_name, dlg.edit_pw1, dlg.edit_pw2):
+        assert field.isVisible()
+        assert field.height() > 10
+    assert dlg.lbl_error.text() == ""

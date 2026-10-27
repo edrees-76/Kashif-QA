@@ -158,6 +158,10 @@ class IdleLock(QObject):
             return
         self.locked = True
 
+        # Close all open secondary dialogs/windows without asking the user
+        if hasattr(self.window, "close_secondary_windows"):
+            self.window.close_secondary_windows()
+
         # Hide window content during lock to prevent unauthorized inspection of lab measurements
         central = self.window.centralWidget() if hasattr(self.window, "centralWidget") else None
         if central:
@@ -171,8 +175,10 @@ class IdleLock(QObject):
 
         self.locked = False
         if dlg.logged_out:
-            if hasattr(self.window, "handle_logout"):
-                self.window.handle_logout()
+            if hasattr(self.window, "_execute_logout"):
+                self.window._execute_logout()
+            self.window.close()
         else:
             self.restart()
+
 
