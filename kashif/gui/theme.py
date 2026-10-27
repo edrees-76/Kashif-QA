@@ -7,8 +7,11 @@ Implements the official design system from docs/visual-identity.md:
 - Dynamic theme switching
 """
 
+import logging
 import os
 from typing import Dict, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Base Color Palette Tokens
 COLORS = {
@@ -37,6 +40,9 @@ COLORS = {
     "dark_teal": "#3FB8C4",     # Dark primary accent
     "dark_orange": "#F5A04A",   # Dark highlight accent
     "dark_line": "#1E3A66",     # Dark borders
+
+    "dark_calendar_bg": "#0E1B2E",      # Dark calendar days grid background
+    "dark_calendar_header": "#070F1E",  # Dark calendar weekday header background (Contrast >= 4.5:1 with text & red)
 
     # Semantic Status Colors (Always paired with icon & text)
     "success": "#1E7A4C",       # Pass / Conformity (Contrast 5.4:1 on light)
@@ -69,6 +75,36 @@ def logo_file(mode=None) -> str:
     return os.path.join(os.path.dirname(__file__), "assets", name)
 
 
+def calendar_arrow_files() -> Tuple[str, str]:
+    """Return forward-slashed absolute paths for (prev_month_arrow, next_month_arrow)."""
+    assets = os.path.join(os.path.dirname(__file__), "assets")
+    prev_icon = os.path.join(assets, "cal_arrow_right_white.png").replace("\\", "/")
+    next_icon = os.path.join(assets, "cal_arrow_left_white.png").replace("\\", "/")
+    if not (os.path.exists(prev_icon) and os.path.exists(next_icon)):
+        try:
+            from PyQt6.QtCore import QPointF, Qt
+            from PyQt6.QtGui import QColor, QPainter, QPixmap, QPolygonF
+
+            os.makedirs(assets, exist_ok=True)
+            for direction, path in [("right", prev_icon), ("left", next_icon)]:
+                pm = QPixmap(20, 20)
+                pm.fill(Qt.GlobalColor.transparent)
+                p = QPainter(pm)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#FFFFFF"))
+                if direction == "right":
+                    poly = QPolygonF([QPointF(6, 4), QPointF(14, 10), QPointF(6, 16)])
+                else:
+                    poly = QPolygonF([QPointF(14, 4), QPointF(6, 10), QPointF(14, 16)])
+                p.drawPolygon(poly)
+                p.end()
+                pm.save(path)
+        except Exception as e:
+            logger.debug("Failed to auto-generate calendar arrow icon: %s", e)
+    return prev_icon, next_icon
+
+
 def status_color(ok: bool, mode=None) -> str:
     """Readable pass/fail text colour for table cells in the active mode."""
     mode = mode or _current_mode
@@ -87,6 +123,7 @@ def get_stylesheet(mode=None) -> str:
 
 
 def _build_light_qss() -> str:
+    cal_prev, cal_next = calendar_arrow_files()
     return f"""
 QWidget {{
     background-color: transparent;
@@ -484,6 +521,18 @@ QCalendarWidget QWidget#qt_calendar_navigationbar {{
     padding: 4px;
 }}
 
+QCalendarWidget QToolButton#qt_calendar_prevmonth {{
+    qproperty-icon: url("{cal_prev}");
+    min-width: 24px;
+    min-height: 24px;
+}}
+
+QCalendarWidget QToolButton#qt_calendar_nextmonth {{
+    qproperty-icon: url("{cal_next}");
+    min-width: 24px;
+    min-height: 24px;
+}}
+
 QCalendarWidget QToolButton {{
     background-color: transparent;
     color: #FFFFFF;
@@ -513,8 +562,27 @@ QCalendarWidget QSpinBox {{
     padding: 2px 6px;
 }}
 
+QCalendarWidget QWidget#qt_calendar_calendarview {{
+    background-color: #FFFFFF;
+    alternate-background-color: {COLORS["light_mist"]};
+    color: {COLORS["light_ink"]};
+    selection-background-color: {COLORS["teal"]};
+    selection-color: #FFFFFF;
+    gridline-color: {COLORS["light_hairline"]};
+}}
+
+QCalendarWidget QAbstractItemView {{
+    background-color: #FFFFFF;
+    alternate-background-color: {COLORS["light_mist"]};
+    color: {COLORS["light_ink"]};
+    selection-background-color: {COLORS["teal"]};
+    selection-color: #FFFFFF;
+    gridline-color: {COLORS["light_hairline"]};
+}}
+
 QCalendarWidget QTableView {{
     background-color: #FFFFFF;
+    alternate-background-color: {COLORS["light_mist"]};
     color: {COLORS["light_ink"]};
     selection-background-color: {COLORS["teal"]};
     selection-color: #FFFFFF;
@@ -549,6 +617,7 @@ QCalendarWidget QMenu {{
 
 
 def _build_dark_qss() -> str:
+    cal_prev, cal_next = calendar_arrow_files()
     return f"""
 QWidget {{
     background-color: transparent;
@@ -930,7 +999,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
 
 /* QCalendarWidget - Dark Mode (Warm dark background, not absolute black #000000) */
 QCalendarWidget {{
-    background-color: #161B22;
+    background-color: {COLORS["dark_calendar_bg"]};
     border: 1px solid {COLORS["dark_line"]};
     border-radius: 8px;
 }}
@@ -940,6 +1009,18 @@ QCalendarWidget QWidget#qt_calendar_navigationbar {{
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
     padding: 4px;
+}}
+
+QCalendarWidget QToolButton#qt_calendar_prevmonth {{
+    qproperty-icon: url("{cal_prev}");
+    min-width: 24px;
+    min-height: 24px;
+}}
+
+QCalendarWidget QToolButton#qt_calendar_nextmonth {{
+    qproperty-icon: url("{cal_next}");
+    min-width: 24px;
+    min-height: 24px;
 }}
 
 QCalendarWidget QToolButton {{
@@ -973,8 +1054,27 @@ QCalendarWidget QSpinBox {{
     padding: 2px 6px;
 }}
 
+QCalendarWidget QWidget#qt_calendar_calendarview {{
+    background-color: {COLORS["dark_calendar_bg"]};
+    alternate-background-color: {COLORS["dark_calendar_header"]};
+    color: {COLORS["dark_ink"]};
+    selection-background-color: {COLORS["dark_teal"]};
+    selection-color: #0A1A33;
+    gridline-color: {COLORS["dark_line"]};
+}}
+
+QCalendarWidget QAbstractItemView {{
+    background-color: {COLORS["dark_calendar_bg"]};
+    alternate-background-color: {COLORS["dark_calendar_header"]};
+    color: {COLORS["dark_ink"]};
+    selection-background-color: {COLORS["dark_teal"]};
+    selection-color: #0A1A33;
+    gridline-color: {COLORS["dark_line"]};
+}}
+
 QCalendarWidget QTableView {{
-    background-color: #161B22;
+    background-color: {COLORS["dark_calendar_bg"]};
+    alternate-background-color: {COLORS["dark_calendar_header"]};
     color: {COLORS["dark_ink"]};
     selection-background-color: {COLORS["dark_teal"]};
     selection-color: #0A1A33;
@@ -992,7 +1092,7 @@ QCalendarWidget QTableView:disabled {{
 }}
 
 QCalendarWidget QHeaderView::section {{
-    background-color: {COLORS["dark_card"]};
+    background-color: {COLORS["dark_calendar_header"]};
     color: {COLORS["dark_teal"]};
     font-weight: bold;
     font-size: 12px;
@@ -1001,7 +1101,7 @@ QCalendarWidget QHeaderView::section {{
 }}
 
 QCalendarWidget QMenu {{
-    background-color: #161B22;
+    background-color: {COLORS["dark_calendar_bg"]};
     color: {COLORS["dark_ink"]};
     border: 1px solid {COLORS["dark_line"]};
 }}

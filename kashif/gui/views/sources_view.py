@@ -57,7 +57,7 @@ from kashif.db.repositories import (
     NuclideRepository,
     SourceRepository,
 )
-from kashif.gui.bidi import format_mixed_text
+from kashif.gui.bidi import format_mixed_text, isolate_ltr
 from kashif.gui.theme import get_stylesheet
 from kashif.services.session import Session
 
@@ -218,7 +218,9 @@ class AddEditSourceDialog(QDialog):
 
         title = "تعديل مصدر مشع" if source_id else "إضافة مصدر مشع جديد — منظومة كاشف"
         self.setWindowTitle(title)
-        self.setMinimumWidth(680)
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+        self.resize(800, 600)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
 
@@ -280,13 +282,18 @@ class AddEditSourceDialog(QDialog):
             "النظير المشع (*)",
             "الفعالية المعتمدة (*)",
             "الوحدة (*)",
-            "تاريخ المعايرة بالشهادة (*)",
+            "تاريخ الشهادة (*)",
             "حذف",
         ])
-        self.tbl_isotopes.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.tbl_isotopes.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        iso_hdr = self.tbl_isotopes.horizontalHeader()
+        iso_hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        iso_hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        iso_hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        iso_hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        iso_hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl_isotopes.verticalHeader().setVisible(False)
         self.tbl_isotopes.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.tbl_isotopes.setMinimumHeight(140)
         layout_iso.addWidget(self.tbl_isotopes)
 
         layout.addWidget(group_iso)
@@ -334,7 +341,7 @@ class AddEditSourceDialog(QDialog):
         nuclides = self._get_available_nuclides()
         combo_nuclide = QComboBox()
         for n in nuclides:
-            label = f"{n['code']} — {n['name_ar']}"
+            label = f"{isolate_ltr(n['code'])} — {n['name_ar']}"
             combo_nuclide.addItem(label, n["code"])
         if nuclide_code:
             idx = combo_nuclide.findData(nuclide_code)
@@ -373,6 +380,8 @@ class AddEditSourceDialog(QDialog):
         btn_delete.clicked.connect(lambda: self._remove_isotope_row(btn_delete))
         self.tbl_isotopes.setCellWidget(row_idx, 4, btn_delete)
 
+        self._update_table_geometry()
+
     def _remove_isotope_row(self, btn: QPushButton) -> None:
         """Remove isotope row, ensuring at least one isotope remains."""
         if self.tbl_isotopes.rowCount() <= 1:
@@ -383,6 +392,16 @@ class AddEditSourceDialog(QDialog):
             if self.tbl_isotopes.cellWidget(r, 4) is btn:
                 self.tbl_isotopes.removeRow(r)
                 break
+
+        self._update_table_geometry()
+
+    def _update_table_geometry(self) -> None:
+        """Ensure isotopes table displays at least 2 rows without vertical cutoff."""
+        header_h = self.tbl_isotopes.horizontalHeader().height() or 34
+        row_h = self.tbl_isotopes.rowHeight(0) if self.tbl_isotopes.rowCount() > 0 else 38
+        target_rows = max(self.tbl_isotopes.rowCount(), 2)
+        min_h = header_h + (row_h * min(target_rows, 5)) + 6
+        self.tbl_isotopes.setMinimumHeight(max(140, min_h))
 
     def _on_define_custom_nuclide(self) -> None:
         """Open custom nuclide dialog and refresh combos upon creation."""
@@ -397,7 +416,7 @@ class AddEditSourceDialog(QDialog):
                 combo.blockSignals(True)
                 combo.clear()
                 for n in nuclides:
-                    combo.addItem(f"{n['code']} — {n['name_ar']}", n["code"])
+                    combo.addItem(f"{isolate_ltr(n['code'])} — {n['name_ar']}", n["code"])
                 idx = combo.findData(current)
                 if idx >= 0:
                     combo.setCurrentIndex(idx)
@@ -430,6 +449,7 @@ class AddEditSourceDialog(QDialog):
                 unit="Bq",
                 cert_date_val=c_date,
             )
+        self._update_table_geometry()
 
     def _on_save(self) -> None:
         """Validate inputs on submit only and commit to repository."""
@@ -841,7 +861,7 @@ class SourcesView(QWidget):
         self.combo_nuclide_filter.clear()
         self.combo_nuclide_filter.addItem("كافة النظائر", "")
         for n in nuclides:
-            self.combo_nuclide_filter.addItem(f"{n['code']} — {n['name_ar']}", n["code"])
+            self.combo_nuclide_filter.addItem(f"{isolate_ltr(n['code'])} — {n['name_ar']}", n["code"])
         idx_nuc = self.combo_nuclide_filter.findData(current_nuc)
         if idx_nuc >= 0:
             self.combo_nuclide_filter.setCurrentIndex(idx_nuc)

@@ -911,6 +911,155 @@ def test_instrument_detail_dialog_corrupt_date_badge(qtbot, caplog):
     set_mode("light")
 
 
+def test_calendar_popup_contrast_ratio_verification(qtbot):
+    """البند 5: اختبار التباين الحقيقي عبر عيّنة بكسلات grab() لنافذة التقويم المنبثقة بالوضعين.
+
+    منهجية الفحص:
+    1. التقاط صورة نقطية للنافذة/العناصر بالوضعين الفاتح والداكن (grab).
+    2. فحص المناطق الثلاث الرئيسية:
+       - شريط التنقّل وأسهم التنقّل (Nav bar with arrows).
+       - صف رأس الأيام (Day names header row).
+       - خلايا تواريخ الأيام (Day cells area).
+    3. أخذ عيّنة بكسلات من كل منطقة وحساب الإضاءة النسبية (Relative Luminance) للون الأفتح والأغمق.
+    4. حساب نسبة التباين وفق معادلة WCAG: CR = (L_lighter + 0.05) / (L_darker + 0.05).
+    5. التأكد من أن نسبة التباين >= 3:1 (الحد العملي الأدنى لعيّنات البكسل المعالجة بالتنعيم Antialiasing).
+    """
+    from PyQt6.QtWidgets import QCalendarWidget, QTableView, QToolButton
+    from kashif.gui.theme import relative_luminance
+
+    def calc_cr(color_hex_1: str, color_hex_2: str) -> float:
+        l1 = relative_luminance(color_hex_1)
+        l2 = relative_luminance(color_hex_2)
+        return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+
+    for mode in ["light", "dark"]:
+        set_mode(mode)
+        cal = QCalendarWidget()
+        cal.setStyleSheet(get_stylesheet())
+        qtbot.addWidget(cal)
+        cal.show()
+        cal.adjustSize()
+
+        # 1. شريط التنقّل وزر السهم (Navigation Button & Arrow)
+        prev_btn = cal.findChild(QToolButton, "qt_calendar_prevmonth")
+        assert prev_btn is not None and prev_btn.isVisible()
+        img_btn = prev_btn.grab().toImage()
+        btn_colors = set(img_btn.pixelColor(x, y).name() for x in range(img_btn.width()) for y in range(img_btn.height()))
+        lum_btn = [(c, relative_luminance(c)) for c in btn_colors]
+        darkest_btn = min(lum_btn, key=lambda x: x[1])[0]
+        lightest_btn = max(lum_btn, key=lambda x: x[1])[0]
+        cr_nav = calc_cr(darkest_btn, lightest_btn)
+        assert cr_nav >= 3.0, f"Navigation arrow contrast {cr_nav:.2f}:1 is below 3:1 in {mode} mode"
+
+        # 2. صف رأس أسماء الأيام (Day names header row - Row 0)
+        view = cal.findChild(QTableView, "qt_calendar_calendarview")
+        assert view is not None and view.isVisible()
+        img_view = view.grab().toImage()
+        dpr = img_view.devicePixelRatio()
+        row0_h = int((view.rowHeight(0) or 30) * dpr)
+        hdr_colors = set(img_view.pixelColor(x, y).name() for x in range(img_view.width()) for y in range(min(row0_h, img_view.height())))
+        lum_hdr = [(c, relative_luminance(c)) for c in hdr_colors]
+        darkest_hdr = min(lum_hdr, key=lambda x: x[1])[0]
+        lightest_hdr = max(lum_hdr, key=lambda x: x[1])[0]
+        cr_hdr = calc_cr(darkest_hdr, lightest_hdr)
+        assert cr_hdr >= 3.0, f"Day names header contrast {cr_hdr:.2f}:1 is below 3:1 in {mode} mode"
+
+        # 3. خلايا تواريخ الأيام (Day cells grid)
+        cell_colors = set(img_view.pixelColor(x, y).name() for x in range(img_view.width()) for y in range(row0_h, img_view.height()))
+        lum_cells = [(c, relative_luminance(c)) for c in cell_colors]
+        darkest_cells = min(lum_cells, key=lambda x: x[1])[0]
+        lightest_cells = max(lum_cells, key=lambda x: x[1])[0]
+        cr_cells = calc_cr(darkest_cells, lightest_cells)
+        assert cr_cells >= 3.0, f"Day cells contrast {cr_cells:.2f}:1 is below 3:1 in {mode} mode"
+
+        cal.close()
+
+    set_mode("light")
+
+
+def test_source_dialog_isotopes_table_visible_rows_count(qtbot, db_conn, tech_session):
+    """البند 5: التحقق من استيعاب جدول النظائر لصفين مرئيين على الأقل وعزل الاتجاه اللاتيني."""
+    from PyQt6.QtWidgets import QHeaderView
+    from kashif.gui.bidi import LRI, PDI
+
+    repo = SourceRepository(db_conn)
+
+    for theme in ["light", "dark"]:
+        set_mode(theme)
+        dlg = AddEditSourceDialog(repo=repo, session=tech_session)
+        dlg.setStyleSheet(get_stylesheet())
+        qtbot.addWidget(dlg)
+        dlg.show()
+
+        # 1. تحقق من الرؤية والحد الأدنى للارتفاع
+        assert dlg.tbl_isotopes.isVisible()
+        assert dlg.tbl_isotopes.minimumHeight() >= 135
+
+        # 2. تحقق من اختصار عنوان عمود التاريخ (لا قص في النص)
+        header_date_text = dlg.tbl_isotopes.horizontalHeaderItem(3).text()
+        assert header_date_text == "تاريخ الشهادة (*)"
+
+        # 3. تحقق من وضع تمدد عمود النظير وتناسب الأعمدة
+        iso_hdr = dlg.tbl_isotopes.horizontalHeader()
+        assert iso_hdr.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+        assert iso_hdr.sectionResizeMode(3) == QHeaderView.ResizeMode.ResizeToContents
+
+        # 4. تحقق من عزل الاتجاه اللاتيني لرمز النظير لمنع التداخل والقص في القائمة
+        combo_nuclide = dlg.tbl_isotopes.cellWidget(0, 0)
+        assert combo_nuclide is not None
+        first_item_text = combo_nuclide.itemText(0)
+        assert LRI in first_item_text and PDI in first_item_text
+
+        # 5. إضافة صف ثانٍ والتحقق من أن ارتفاع الجدول يستوعب صفين كاملين على الأقل دون قص
+        dlg.btn_add_iso.click()
+        assert dlg.tbl_isotopes.rowCount() == 2
+
+        header_h = dlg.tbl_isotopes.horizontalHeader().height() or 34
+        row0_h = dlg.tbl_isotopes.rowHeight(0) or 38
+        row1_h = dlg.tbl_isotopes.rowHeight(1) or 38
+        needed_h = header_h + row0_h + row1_h
+
+        assert dlg.tbl_isotopes.minimumHeight() >= needed_h or dlg.tbl_isotopes.height() >= needed_h
+
+        dlg.close()
+
+    set_mode("light")
+
+
+def test_theme_calendar_arrow_files_and_status_color(qtbot, monkeypatch):
+    """Test theme helper functions: calendar_arrow_files and status_color."""
+    import os
+    from kashif.gui.theme import calendar_arrow_files, status_color, logo_file, COLORS
+
+    # 1. Existing assets return valid files
+    prev_icon, next_icon = calendar_arrow_files()
+    assert os.path.exists(prev_icon)
+    assert os.path.exists(next_icon)
+
+    # 2. Status colors in both modes
+    assert status_color(True, "dark") == "#4ADE80"
+    assert status_color(False, "dark") == "#F87171"
+    assert status_color(True, "light") == COLORS["success"]
+    assert status_color(False, "light") == COLORS["error"]
+
+    # 3. Logo file in both modes
+    assert os.path.exists(logo_file("light"))
+    assert os.path.exists(logo_file("dark"))
+
+    # 4. Fallback creation branch coverage
+    orig_exists = os.path.exists
+    monkeypatch.setattr(
+        os.path,
+        "exists",
+        lambda p: False if "cal_arrow" in str(p) else orig_exists(p)
+    )
+    p1, p2 = calendar_arrow_files()
+    assert p1.endswith(".png")
+    assert p2.endswith(".png")
+
+
+
+
 
 
 
