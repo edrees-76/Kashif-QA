@@ -213,20 +213,39 @@ class Instrument(BaseModel):
         return self
 
 
-class RadioactiveSource(BaseModel):
-    """نموذج مصدر إشعاعي للمعايرة والفحص."""
+class SourceIsotope(BaseModel):
+    """نموذج نظير مشع داخل مصدر معايرة (قد يحتوي المصدر عدة نظائر)."""
     model_config = ConfigDict(strict=True, extra="forbid")
 
     id: Optional[int] = None
-    nuclide: Nuclide
-    source_code: str = Field(..., min_length=1)
-    serial_number: str = Field(..., min_length=1)
-    cert_activity_bq: float = Field(..., gt=0.0, description="الفعالية الإشعاعية المعتمدة بالبيكرل")
-    cert_date: date = Field(..., description="تاريخ شهادة المعايرة")
-    half_life_days: float = Field(..., gt=0.0, description="عمر النصف بالأيام")
+    nuclide_code: str = Field(..., min_length=1, description="رمز النظير المشع (مثل Co-60 أو Cs-137)")
+    cert_activity_bq: float = Field(..., gt=0.0, description="الفعالية الإشعاعية المعتمدة بالبيكرل (Bq)")
+    cert_date: Optional[date] = Field(default=None, description="تاريخ شهادة النظير (يرث من المصدر إن لم يحدد)")
+
+    @field_validator("nuclide_code")
+    @classmethod
+    def validate_non_empty_code(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("رمز النظير إلزامي ولا يمكن أن يكون فارغاً")
+        return s
+
+
+class RadioactiveSource(BaseModel):
+    """نموذج مصدر إشعاعي للمعايرة والفحص (قد يحتوي نظيراً واحداً أو أكثر وفق قرار مدير المشروع)."""
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    id: Optional[int] = None
+    source_code: str = Field(..., min_length=1, description="الرمز المعملي الفريد للمصدر")
+    serial_number: str = Field(..., min_length=1, description="الرقم التسلسلي في الشهادة")
+    manufacturer: Optional[str] = None
     certificate_number: Optional[str] = None
+    cert_date: Optional[date] = Field(default=None, description="تاريخ شهادة المعايرة الأساسي")
     facility_name: Optional[str] = None
+    is_active: bool = True
+    status: str = "ACTIVE"
     notes: Optional[str] = None
+    isotopes: List[SourceIsotope] = Field(..., min_length=1, description="قائمة النظائر المشعة في المصدر (نظير واحد على الأقل)")
 
     @field_validator("source_code", "serial_number")
     @classmethod
@@ -235,6 +254,29 @@ class RadioactiveSource(BaseModel):
         if not s:
             raise ValueError("الحقل النصي إلزامي ولا يمكن أن يكون فارغاً")
         return s
+
+    @model_validator(mode="after")
+    def populate_dates_and_isotopes(self) -> "RadioactiveSource":
+        if self.cert_date is None and self.isotopes:
+            first_date = next((iso.cert_date for iso in self.isotopes if iso.cert_date is not None), None)
+            if first_date is not None:
+                object.__setattr__(self, "cert_date", first_date)
+        if self.cert_date is not None and self.isotopes:
+            for iso in self.isotopes:
+                if iso.cert_date is None:
+                    object.__setattr__(iso, "cert_date", self.cert_date)
+        return self
+
+    @property
+    def primary_nuclide(self) -> str:
+        """رمز النظير الأساسي (الأول) في المصدر."""
+        return self.isotopes[0].nuclide_code
+
+    @property
+    def total_activity_bq(self) -> float:
+        """مجموع الفعالية الإشعاعية المعتمدة لجميع النظائر في المصدر بالبيكرل."""
+        return sum(iso.cert_activity_bq for iso in self.isotopes)
+
 
 
 # ---------------------------------------------------------------------------

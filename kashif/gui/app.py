@@ -44,12 +44,12 @@ def setup_global_exception_handler(app: QApplication) -> None:
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(log_entry)
         except Exception as file_err:
-            print(f"Failed to write to error log: {file_err}", file=sys.stderr)
+            logger.error("Failed to write to error log: %s", file_err)
             
-        print(f"Unhandled exception recorded in {ERROR_LOG_FILENAME}: {exc_type.__name__}: {exc_value}", file=sys.stderr)
+        logger.error("Unhandled exception recorded in %s: %s: %s", ERROR_LOG_FILENAME, exc_type.__name__, exc_value)
         
-        # Display polite dialog to user (suppressed in automated test environments)
-        if not os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+        # Display polite dialog to user (suppressed when running offscreen)
+        if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
             try:
                 msg_box = QMessageBox()
                 msg_box.setIcon(QMessageBox.Icon.Critical)
@@ -62,8 +62,8 @@ def setup_global_exception_handler(app: QApplication) -> None:
                 msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
                 msg_box.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
                 msg_box.exec()
-            except Exception:
-                pass
+            except Exception as dlg_err:
+                logger.error("Failed to display error dialog: %s", dlg_err)
 
     sys.excepthook = exception_hook
 

@@ -288,11 +288,263 @@ QFrame.warn-card {{ background-color: rgba(179, 92, 0, 0.12); border: 1px solid 
 QPushButton.btn-success {{ background-color: {COLORS["success"]}; color: #FFFFFF; border-color: {COLORS["success"]}; font-size: 14px; }}
 QLineEdit.key-field {{ font-family: monospace; color: {COLORS["navy"]}; font-weight: bold; }}
 
+
+/* Sidebar navigation */
+QFrame.sidebar {{
+    background-color: #FFFFFF;
+    border-left: 1px solid {COLORS["light_hairline"]};
+}}
+
+QPushButton.nav-item {{
+    background-color: transparent;
+    color: {COLORS["light_ink"]};
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: right;
+    min-height: 24px;
+}}
+
+QPushButton.nav-item:hover {{
+    background-color: {COLORS["light_mist"]};
+    color: {COLORS["navy"]};
+}}
+
+QPushButton.nav-item-active {{
+    background-color: {COLORS["light_mist"]};
+    color: {COLORS["navy"]};
+    border-right: 4px solid {COLORS["teal"]};
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: right;
+    min-height: 24px;
+}}
+
+QPushButton.nav-toggle {{
+    background-color: transparent;
+    color: {COLORS["light_slate"]};
+    border: 1px solid {COLORS["light_line"]};
+    border-radius: 8px;
+    padding: 6px;
+    font-size: 13px;
+    min-height: 20px;
+}}
+
+QPushButton.nav-toggle:hover {{
+    background-color: {COLORS["light_mist"]};
+    color: {COLORS["navy"]};
+}}
+
+/* Summary Cards */
+QFrame.summary-card {{
+    background-color: {COLORS["light_card"]};
+    border: 1px solid {COLORS["light_hairline"]};
+    border-radius: 14px;
+    padding: 16px;
+}}
+
+QFrame.summary-card:hover {{
+    border-color: {COLORS["teal"]};
+    background-color: #F8FCFC;
+}}
+
+QLabel.summary-count {{
+    color: {COLORS["navy"]};
+    font-size: 26px;
+    font-weight: bold;
+}}
+
+QLabel.summary-count-warning {{
+    color: {COLORS["orange_dark"]};
+    font-size: 26px;
+    font-weight: bold;
+}}
+
+QLabel.summary-title {{
+    color: {COLORS["light_slate"]};
+    font-size: 13px;
+    font-weight: 600;
+}}
+
+QLabel.summary-sub {{
+    color: {COLORS["teal_dark"]};
+    font-size: 12px;
+}}
+
+/* Calibration & Activity Badges */
+QLabel.badge-expired {{
+    background-color: rgba(179, 38, 30, 0.12);
+    color: {COLORS["error"]};
+    border: 1px solid {COLORS["error"]};
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+QLabel.badge-valid {{
+    background-color: rgba(30, 122, 76, 0.12);
+    color: {COLORS["success"]};
+    border: 1px solid {COLORS["success"]};
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+QLabel.badge-neutral {{
+    background-color: rgba(12, 144, 156, 0.12);
+    color: {COLORS["teal_dark"]};
+    border: 1px solid {COLORS["teal"]};
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+/* Search input */
+QLineEdit.search-box {{
+    background-color: #FFFFFF;
+    color: {COLORS["light_ink"]};
+    border: 1px solid {COLORS["light_line"]};
+    border-radius: 18px;
+    padding: 6px 14px;
+    font-size: 13px;
+}}
+
+QLineEdit.search-box:focus {{
+    border-color: {COLORS["teal"]};
+}}
+
 QTableCornerButton::section {{
     background-color: {COLORS["navy"]};
     border: none;
 }}
 
+/* Scrollbars - Light Mode */
+QScrollBar:vertical {{
+    background: {COLORS["light_surface"]};
+    width: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:vertical {{
+    background: {COLORS["light_line"]};
+    min-height: 24px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background: #A9BCC4;
+}}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+    background: none;
+}}
+
+QScrollBar:horizontal {{
+    background: {COLORS["light_surface"]};
+    height: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: {COLORS["light_line"]};
+    min-width: 24px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:horizontal:hover {{
+    background: #A9BCC4;
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+    background: none;
+}}
+
+/* QCalendarWidget - Light Mode */
+QCalendarWidget {{
+    background-color: #FFFFFF;
+    border: 1px solid {COLORS["light_line"]};
+    border-radius: 8px;
+}}
+
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background-color: {COLORS["navy"]};
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 4px;
+}}
+
+QCalendarWidget QToolButton {{
+    background-color: transparent;
+    color: #FFFFFF;
+    font-weight: bold;
+    font-size: 13px;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-height: 22px;
+}}
+
+QCalendarWidget QToolButton:hover {{
+    background-color: {COLORS["blue"]};
+}}
+
+QCalendarWidget QToolButton:pressed {{
+    background-color: {COLORS["teal_dark"]};
+}}
+
+QCalendarWidget QSpinBox {{
+    background-color: {COLORS["blue"]};
+    color: #FFFFFF;
+    font-weight: bold;
+    font-size: 13px;
+    border: 1px solid {COLORS["teal"]};
+    border-radius: 4px;
+    padding: 2px 6px;
+}}
+
+QCalendarWidget QTableView {{
+    background-color: #FFFFFF;
+    color: {COLORS["light_ink"]};
+    selection-background-color: {COLORS["teal"]};
+    selection-color: #FFFFFF;
+    gridline-color: {COLORS["light_hairline"]};
+    outline: 0;
+    font-size: 13px;
+}}
+
+QCalendarWidget QTableView:enabled {{
+    color: {COLORS["light_ink"]};
+}}
+
+QCalendarWidget QTableView:disabled {{
+    color: #8C9BA5;
+}}
+
+QCalendarWidget QHeaderView::section {{
+    background-color: {COLORS["light_mist"]};
+    color: {COLORS["navy"]};
+    font-weight: bold;
+    font-size: 12px;
+    padding: 4px;
+    border: none;
+}}
+
+QCalendarWidget QMenu {{
+    background-color: #FFFFFF;
+    color: {COLORS["light_ink"]};
+    border: 1px solid {COLORS["light_line"]};
+}}
 """
 
 
@@ -487,11 +739,272 @@ QFrame.warn-card {{ background-color: rgba(179, 92, 0, 0.25); border: 1px solid 
 QPushButton.btn-success {{ background-color: {COLORS["success"]}; color: #FFFFFF; border-color: {COLORS["success"]}; font-size: 14px; }}
 QLineEdit.key-field {{ font-family: monospace; color: {COLORS["dark_ink"]}; font-weight: bold; }}
 
+
+/* Sidebar navigation */
+QFrame.sidebar {{
+    background-color: {COLORS["dark_card"]};
+    border-left: 1px solid {COLORS["dark_line"]};
+}}
+
+QPushButton.nav-item {{
+    background-color: transparent;
+    color: {COLORS["dark_ink"]};
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: right;
+    min-height: 24px;
+}}
+
+QPushButton.nav-item:hover {{
+    background-color: #173866;
+    color: {COLORS["dark_teal"]};
+}}
+
+QPushButton.nav-item-active {{
+    background-color: #173866;
+    color: {COLORS["dark_teal"]};
+    border-right: 4px solid {COLORS["dark_teal"]};
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: right;
+    min-height: 24px;
+}}
+
+QPushButton.nav-toggle {{
+    background-color: transparent;
+    color: {COLORS["dark_slate"]};
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 8px;
+    padding: 6px;
+    font-size: 13px;
+    min-height: 20px;
+}}
+
+QPushButton.nav-toggle:hover {{
+    background-color: #173866;
+    color: {COLORS["dark_teal"]};
+}}
+
+/* Summary Cards */
+QFrame.summary-card {{
+    background-color: {COLORS["dark_card"]};
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 14px;
+    padding: 16px;
+}}
+
+QFrame.summary-card:hover {{
+    border-color: {COLORS["dark_teal"]};
+    background-color: #15325E;
+}}
+
+QLabel.summary-count {{
+    color: {COLORS["dark_teal"]};
+    font-size: 26px;
+    font-weight: bold;
+}}
+
+QLabel.summary-count-warning {{
+    color: {COLORS["dark_orange"]};
+    font-size: 26px;
+    font-weight: bold;
+}}
+
+QLabel.summary-title {{
+    color: {COLORS["dark_slate"]};
+    font-size: 13px;
+    font-weight: 600;
+}}
+
+QLabel.summary-sub {{
+    color: {COLORS["dark_orange"]};
+    font-size: 12px;
+}}
+
+/* Filter labels for high contrast in dark mode */
+QLabel.filter-label {{
+    color: #C4D5DF;
+    font-weight: 500;
+    font-size: 13px;
+}}
+
+/* Calibration & Activity Badges */
+QLabel.badge-expired {{
+    background-color: rgba(179, 38, 30, 0.25);
+    color: #F87171;
+    border: 1px solid #F87171;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+QLabel.badge-valid {{
+    background-color: rgba(74, 222, 128, 0.2);
+    color: #4ADE80;
+    border: 1px solid #4ADE80;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+QLabel.badge-neutral {{
+    background-color: rgba(63, 184, 196, 0.2);
+    color: {COLORS["dark_teal"]};
+    border: 1px solid {COLORS["dark_teal"]};
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+/* Search input */
+QLineEdit.search-box {{
+    background-color: #071224;
+    color: {COLORS["dark_ink"]};
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 18px;
+    padding: 6px 14px;
+    font-size: 13px;
+}}
+
+QLineEdit.search-box:focus {{
+    border-color: {COLORS["dark_teal"]};
+}}
+
 QTableCornerButton::section {{
     background-color: #071224;
     border: none;
 }}
 
+/* Scrollbars - Dark Mode */
+QScrollBar:vertical {{
+    background: {COLORS["dark_surface"]};
+    width: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:vertical {{
+    background: {COLORS["dark_line"]};
+    min-height: 24px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background: {COLORS["dark_teal"]};
+}}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+    background: none;
+}}
+
+QScrollBar:horizontal {{
+    background: {COLORS["dark_surface"]};
+    height: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: {COLORS["dark_line"]};
+    min-width: 24px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:horizontal:hover {{
+    background: {COLORS["dark_teal"]};
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+    background: none;
+}}
+
+/* QCalendarWidget - Dark Mode (Warm dark background, not absolute black #000000) */
+QCalendarWidget {{
+    background-color: #161B22;
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 8px;
+}}
+
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background-color: {COLORS["dark_card"]};
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 4px;
+}}
+
+QCalendarWidget QToolButton {{
+    background-color: transparent;
+    color: {COLORS["dark_ink"]};
+    font-weight: bold;
+    font-size: 13px;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-height: 22px;
+}}
+
+QCalendarWidget QToolButton:hover {{
+    background-color: #173866;
+    color: {COLORS["dark_teal"]};
+}}
+
+QCalendarWidget QToolButton:pressed {{
+    background-color: {COLORS["dark_teal"]};
+    color: #FFFFFF;
+}}
+
+QCalendarWidget QSpinBox {{
+    background-color: #0A1A33;
+    color: {COLORS["dark_ink"]};
+    font-weight: bold;
+    font-size: 13px;
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 4px;
+    padding: 2px 6px;
+}}
+
+QCalendarWidget QTableView {{
+    background-color: #161B22;
+    color: {COLORS["dark_ink"]};
+    selection-background-color: {COLORS["dark_teal"]};
+    selection-color: #0A1A33;
+    gridline-color: {COLORS["dark_line"]};
+    outline: 0;
+    font-size: 13px;
+}}
+
+QCalendarWidget QTableView:enabled {{
+    color: {COLORS["dark_ink"]};
+}}
+
+QCalendarWidget QTableView:disabled {{
+    color: #627282;
+}}
+
+QCalendarWidget QHeaderView::section {{
+    background-color: {COLORS["dark_card"]};
+    color: {COLORS["dark_teal"]};
+    font-weight: bold;
+    font-size: 12px;
+    padding: 4px;
+    border: none;
+}}
+
+QCalendarWidget QMenu {{
+    background-color: #161B22;
+    color: {COLORS["dark_ink"]};
+    border: 1px solid {COLORS["dark_line"]};
+}}
 """
 
 

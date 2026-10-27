@@ -82,11 +82,13 @@ def test_schema_migrations_runner(temp_db_path):
     """TASK-0.3: Migration engine applies Version 1 and records execution in schema_migrations."""
     conn = create_connection(temp_db_path)
     
-    # First run applies migrations 1 and 2
+    # First run applies migrations 1, 2, 3, and 4
     applied = apply_migrations(conn)
     assert 1 in applied
     assert 2 in applied
-    assert get_applied_migrations(conn) == [1, 2]
+    assert 3 in applied
+    assert 4 in applied
+    assert get_applied_migrations(conn) == [1, 2, 3, 4]
     
     # Second run is idempotent
     second_run = apply_migrations(conn)
@@ -102,6 +104,16 @@ def test_schema_migrations_runner(temp_db_path):
     row2 = cursor.fetchone()
     assert row2 is not None
     assert "lockout" in row2["description"]
+
+    cursor.execute("SELECT version, description FROM schema_migrations WHERE version = 3;")
+    row3 = cursor.fetchone()
+    assert row3 is not None
+    assert "registries" in row3["description"]
+
+    cursor.execute("SELECT version, description FROM schema_migrations WHERE version = 4;")
+    row4 = cursor.fetchone()
+    assert row4 is not None
+    assert "Nuclides reference" in row4["description"]
     cursor.close()
     conn.close()
 
@@ -338,5 +350,96 @@ def test_main_window_smoke_qt(qtbot, db_conn):
     assert window.lbl_db_status.text().startswith("🟢")
     assert "سليم" in window.lbl_audit_status.text()
     window._is_logging_out = True
+
+
+def test_migration_004_data_preservation_and_nuclides_seeds(temp_db_path):
+    """Migration 004 preserves existing source data and seeds reference nuclides correctly."""
+    from kashif.db.migrations import (
+        init_migrations_table,
+        migration_001_initial_core_security,
+        migration_002_user_lockout_and_session,
+        migration_003_registries_detectors_instruments_sources,
+    )
+    conn = create_connection(temp_db_path)
+    init_migrations_table(conn)
+
+    # Apply 1, 2, 3 manually to simulate pre-migration database state
+    migration_001_initial_core_security(conn)
+    migration_002_user_lockout_and_session(conn)
+    migration_003_registries_detectors_instruments_sources(conn)
+    conn.execute("INSERT INTO schema_migrations (version, applied_at, description) VALUES (1, 't', '1'), (2, 't', '2'), (3, 't', '3');")
+    conn.commit()
+
+    # Insert an existing source in old single-nuclide schema
+    conn.execute("""
+        INSERT INTO sources (
+            nuclide, source_code, serial_number, cert_activity_bq,
+            cert_date, half_life_days, certificate_number, facility_name,
+            is_active, status, notes, created_at, updated_at
+        ) VALUES (
+            'Co-60', 'SRC-LEGACY-01', 'SN-LEGACY-999', 37000.0,
+            '2024-01-01', 1925.38, 'CERT-OLD-01', 'Lab Alpha',
+            1, 'ACTIVE', 'Legacy source note', '2024-01-01T00:00:00', '2024-01-01T00:00:00'
+        );
+    """)
+    conn.commit()
+
+    # Now apply migrations (migration 4 runs)
+    newly_applied = apply_migrations(conn)
+    assert 4 in newly_applied
+
+    # Verify source table has new structure and retained legacy record
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM sources WHERE source_code = 'SRC-LEGACY-01';")
+    s_row = cursor.fetchone()
+    assert s_row is not None
+    assert s_row["serial_number"] == "SN-LEGACY-999"
+    assert s_row["facility_name"] == "Lab Alpha"
+    assert "nuclide" not in s_row.keys()  # Column moved to source_isotopes
+
+    # Verify isotope was migrated to source_isotopes
+    cursor.execute("SELECT * FROM source_isotopes WHERE source_id = ?;", (s_row["id"],))
+    iso_row = cursor.fetchone()
+    assert iso_row is not None
+    assert iso_row["nuclide_code"] == "Co-60"
+    assert iso_row["cert_activity_bq"] == 37000.0
+    assert iso_row["cert_date"] == "2024-01-01"
+
+    # Verify reference nuclides seeds (Item 3 in CYCLE-2B-FIX-2)
+    from kashif.core.decay import half_life_to_days
+    import math
+
+    cursor.execute("SELECT code, half_life_days, half_life_value, half_life_unit, confirmed, reference FROM nuclides;")
+    nuclides = {r["code"]: r for r in cursor.fetchall()}
+    assert len(nuclides) == 12
+
+    # Verify half_life_days is strictly derived from (value * unit factor) for every single seeded nuclide
+    for code, row in nuclides.items():
+        expected_days = half_life_to_days(row["half_life_value"], row["half_life_unit"])
+        assert math.isclose(row["half_life_days"], expected_days, rel_tol=1e-6), (
+            f"Nuclide {code} half_life_days {row['half_life_days']} does not match derived {expected_days}"
+        )
+        # Verify reference has URL and evaluation year
+        assert "http" in row["reference"] or "MRNI" in row["reference"]
+
+    # Standard nuclides confirmed
+    assert nuclides["Co-60"]["confirmed"] == 1
+    assert nuclides["Cs-137"]["confirmed"] == 1
+
+    # Verify Zn-65 updated to 243.66 d per NuDat 3.0 / ENSDF
+    assert nuclides["Zn-65"]["confirmed"] == 0
+    assert nuclides["Zn-65"]["half_life_value"] == 243.66
+    assert nuclides["Zn-65"]["half_life_unit"] == "d"
+    assert nuclides["Zn-65"]["half_life_days"] == 243.66
+    assert "NuDat" in nuclides["Zn-65"]["reference"]
+
+    # Other gamma nuclides unconfirmed with detailed published references
+    assert nuclides["Am-241"]["confirmed"] == 0
+    assert "NuDat" in nuclides["Am-241"]["reference"]
+    assert nuclides["Ba-133"]["confirmed"] == 0
+    assert nuclides["Ra-226"]["confirmed"] == 0
+
+    cursor.close()
+    conn.close()
 
 

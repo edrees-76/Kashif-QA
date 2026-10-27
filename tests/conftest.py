@@ -34,3 +34,19 @@ def db_conn(temp_db_path):
     apply_migrations(conn)
     yield conn
     conn.close()
+
+
+@pytest.fixture(autouse=True)
+def auto_mock_qt_modals(monkeypatch):
+    """Automatically answer Yes/Ok to modal prompts and make QDialog.exec non-blocking across tests."""
+    from PyQt6.QtWidgets import QMessageBox, QDialog
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+
+    def non_blocking_exec(self):
+        self.show()
+        return 1
+    monkeypatch.setattr(QDialog, "exec", non_blocking_exec)
+
