@@ -30,6 +30,7 @@ def test_global_exception_handler(tmp_path, monkeypatch):
     # Intercept log file path to temporary directory for isolated testing
     test_log_file = tmp_path / "test_error.log"
     monkeypatch.setattr("kashif.gui.app.ERROR_LOG_FILENAME", str(test_log_file))
+    monkeypatch.setattr("PyQt6.QtWidgets.QMessageBox.exec", lambda self: None)
 
     # Simulate an unhandled exception hook call
     try:

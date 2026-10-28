@@ -7,8 +7,11 @@ Implements the official design system from docs/visual-identity.md:
 - Dynamic theme switching
 """
 
+import logging
 import os
 from typing import Dict, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Base Color Palette Tokens
 COLORS = {
@@ -37,6 +40,9 @@ COLORS = {
     "dark_teal": "#3FB8C4",     # Dark primary accent
     "dark_orange": "#F5A04A",   # Dark highlight accent
     "dark_line": "#1E3A66",     # Dark borders
+
+    "dark_calendar_bg": "#0E1B2E",      # Dark calendar days grid background
+    "dark_calendar_header": "#070F1E",  # Dark calendar weekday header background (Contrast >= 4.5:1 with text & red)
 
     # Semantic Status Colors (Always paired with icon & text)
     "success": "#1E7A4C",       # Pass / Conformity (Contrast 5.4:1 on light)
@@ -69,6 +75,36 @@ def logo_file(mode=None) -> str:
     return os.path.join(os.path.dirname(__file__), "assets", name)
 
 
+def calendar_arrow_files() -> Tuple[str, str]:
+    """Return forward-slashed absolute paths for (prev_month_arrow, next_month_arrow)."""
+    assets = os.path.join(os.path.dirname(__file__), "assets")
+    prev_icon = os.path.join(assets, "cal_arrow_right_white.png").replace("\\", "/")
+    next_icon = os.path.join(assets, "cal_arrow_left_white.png").replace("\\", "/")
+    if not (os.path.exists(prev_icon) and os.path.exists(next_icon)):
+        try:
+            from PyQt6.QtCore import QPointF, Qt
+            from PyQt6.QtGui import QColor, QPainter, QPixmap, QPolygonF
+
+            os.makedirs(assets, exist_ok=True)
+            for direction, path in [("right", prev_icon), ("left", next_icon)]:
+                pm = QPixmap(20, 20)
+                pm.fill(Qt.GlobalColor.transparent)
+                p = QPainter(pm)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#FFFFFF"))
+                if direction == "right":
+                    poly = QPolygonF([QPointF(6, 4), QPointF(14, 10), QPointF(6, 16)])
+                else:
+                    poly = QPolygonF([QPointF(14, 4), QPointF(6, 10), QPointF(14, 16)])
+                p.drawPolygon(poly)
+                p.end()
+                pm.save(path)
+        except Exception as e:
+            logger.debug("Failed to auto-generate calendar arrow icon: %s", e)
+    return prev_icon, next_icon
+
+
 def status_color(ok: bool, mode=None) -> str:
     """Readable pass/fail text colour for table cells in the active mode."""
     mode = mode or _current_mode
@@ -87,6 +123,7 @@ def get_stylesheet(mode=None) -> str:
 
 
 def _build_light_qss() -> str:
+    cal_prev, cal_next = calendar_arrow_files()
     return f"""
 QWidget {{
     background-color: transparent;
@@ -288,15 +325,299 @@ QFrame.warn-card {{ background-color: rgba(179, 92, 0, 0.12); border: 1px solid 
 QPushButton.btn-success {{ background-color: {COLORS["success"]}; color: #FFFFFF; border-color: {COLORS["success"]}; font-size: 14px; }}
 QLineEdit.key-field {{ font-family: monospace; color: {COLORS["navy"]}; font-weight: bold; }}
 
+
+/* Sidebar navigation */
+QFrame.sidebar {{
+    background-color: #FFFFFF;
+    border-left: 1px solid {COLORS["light_hairline"]};
+}}
+
+QPushButton.nav-item {{
+    background-color: transparent;
+    color: {COLORS["light_ink"]};
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: right;
+    min-height: 24px;
+}}
+
+QPushButton.nav-item:hover {{
+    background-color: {COLORS["light_mist"]};
+    color: {COLORS["navy"]};
+}}
+
+QPushButton.nav-item-active {{
+    background-color: {COLORS["light_mist"]};
+    color: {COLORS["navy"]};
+    border-right: 4px solid {COLORS["teal"]};
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: right;
+    min-height: 24px;
+}}
+
+QPushButton.nav-toggle {{
+    background-color: transparent;
+    color: {COLORS["light_slate"]};
+    border: 1px solid {COLORS["light_line"]};
+    border-radius: 8px;
+    padding: 6px;
+    font-size: 13px;
+    min-height: 20px;
+}}
+
+QPushButton.nav-toggle:hover {{
+    background-color: {COLORS["light_mist"]};
+    color: {COLORS["navy"]};
+}}
+
+/* Summary Cards */
+QFrame.summary-card {{
+    background-color: {COLORS["light_card"]};
+    border: 1px solid {COLORS["light_hairline"]};
+    border-radius: 14px;
+    padding: 16px;
+}}
+
+QFrame.summary-card:hover {{
+    border-color: {COLORS["teal"]};
+    background-color: #F8FCFC;
+}}
+
+QLabel.summary-count {{
+    color: {COLORS["navy"]};
+    font-size: 26px;
+    font-weight: bold;
+}}
+
+QLabel.summary-count-warning {{
+    color: {COLORS["orange_dark"]};
+    font-size: 26px;
+    font-weight: bold;
+}}
+
+QLabel.summary-title {{
+    color: {COLORS["light_slate"]};
+    font-size: 13px;
+    font-weight: 600;
+}}
+
+QLabel.summary-sub {{
+    color: {COLORS["teal_dark"]};
+    font-size: 12px;
+}}
+
+/* Calibration & Activity Badges */
+QLabel.badge-expired {{
+    background-color: rgba(179, 38, 30, 0.12);
+    color: {COLORS["error"]};
+    border: 1px solid {COLORS["error"]};
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+QLabel.badge-valid {{
+    background-color: rgba(30, 122, 76, 0.12);
+    color: {COLORS["success"]};
+    border: 1px solid {COLORS["success"]};
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+QLabel.badge-neutral {{
+    background-color: rgba(12, 144, 156, 0.12);
+    color: {COLORS["teal_dark"]};
+    border: 1px solid {COLORS["teal"]};
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+/* Search input */
+QLineEdit.search-box {{
+    background-color: #FFFFFF;
+    color: {COLORS["light_ink"]};
+    border: 1px solid {COLORS["light_line"]};
+    border-radius: 18px;
+    padding: 6px 14px;
+    font-size: 13px;
+}}
+
+QLineEdit.search-box:focus {{
+    border-color: {COLORS["teal"]};
+}}
+
 QTableCornerButton::section {{
     background-color: {COLORS["navy"]};
     border: none;
 }}
 
+/* Scrollbars - Light Mode */
+QScrollBar:vertical {{
+    background: {COLORS["light_surface"]};
+    width: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:vertical {{
+    background: {COLORS["light_line"]};
+    min-height: 24px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background: #A9BCC4;
+}}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+    background: none;
+}}
+
+QScrollBar:horizontal {{
+    background: {COLORS["light_surface"]};
+    height: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: {COLORS["light_line"]};
+    min-width: 24px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:horizontal:hover {{
+    background: #A9BCC4;
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+    background: none;
+}}
+
+/* QCalendarWidget - Light Mode */
+QCalendarWidget {{
+    background-color: #FFFFFF;
+    border: 1px solid {COLORS["light_line"]};
+    border-radius: 8px;
+}}
+
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background-color: {COLORS["navy"]};
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 4px;
+}}
+
+QCalendarWidget QToolButton#qt_calendar_prevmonth {{
+    qproperty-icon: url("{cal_prev}");
+    min-width: 24px;
+    min-height: 24px;
+}}
+
+QCalendarWidget QToolButton#qt_calendar_nextmonth {{
+    qproperty-icon: url("{cal_next}");
+    min-width: 24px;
+    min-height: 24px;
+}}
+
+QCalendarWidget QToolButton {{
+    background-color: transparent;
+    color: #FFFFFF;
+    font-weight: bold;
+    font-size: 13px;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-height: 22px;
+}}
+
+QCalendarWidget QToolButton:hover {{
+    background-color: {COLORS["blue"]};
+}}
+
+QCalendarWidget QToolButton:pressed {{
+    background-color: {COLORS["teal_dark"]};
+}}
+
+QCalendarWidget QSpinBox {{
+    background-color: {COLORS["blue"]};
+    color: #FFFFFF;
+    font-weight: bold;
+    font-size: 13px;
+    border: 1px solid {COLORS["teal"]};
+    border-radius: 4px;
+    padding: 2px 6px;
+}}
+
+QCalendarWidget QWidget#qt_calendar_calendarview {{
+    background-color: #FFFFFF;
+    alternate-background-color: {COLORS["light_mist"]};
+    color: {COLORS["light_ink"]};
+    selection-background-color: {COLORS["teal"]};
+    selection-color: #FFFFFF;
+    gridline-color: {COLORS["light_hairline"]};
+}}
+
+QCalendarWidget QAbstractItemView {{
+    background-color: #FFFFFF;
+    alternate-background-color: {COLORS["light_mist"]};
+    color: {COLORS["light_ink"]};
+    selection-background-color: {COLORS["teal"]};
+    selection-color: #FFFFFF;
+    gridline-color: {COLORS["light_hairline"]};
+}}
+
+QCalendarWidget QTableView {{
+    background-color: #FFFFFF;
+    alternate-background-color: {COLORS["light_mist"]};
+    color: {COLORS["light_ink"]};
+    selection-background-color: {COLORS["teal"]};
+    selection-color: #FFFFFF;
+    gridline-color: {COLORS["light_hairline"]};
+    outline: 0;
+    font-size: 13px;
+}}
+
+QCalendarWidget QTableView:enabled {{
+    color: {COLORS["light_ink"]};
+}}
+
+QCalendarWidget QTableView:disabled {{
+    color: #8C9BA5;
+}}
+
+QCalendarWidget QHeaderView::section {{
+    background-color: {COLORS["light_mist"]};
+    color: {COLORS["navy"]};
+    font-weight: bold;
+    font-size: 12px;
+    padding: 4px;
+    border: none;
+}}
+
+QCalendarWidget QMenu {{
+    background-color: #FFFFFF;
+    color: {COLORS["light_ink"]};
+    border: 1px solid {COLORS["light_line"]};
+}}
 """
 
 
 def _build_dark_qss() -> str:
+    cal_prev, cal_next = calendar_arrow_files()
     return f"""
 QWidget {{
     background-color: transparent;
@@ -487,11 +808,303 @@ QFrame.warn-card {{ background-color: rgba(179, 92, 0, 0.25); border: 1px solid 
 QPushButton.btn-success {{ background-color: {COLORS["success"]}; color: #FFFFFF; border-color: {COLORS["success"]}; font-size: 14px; }}
 QLineEdit.key-field {{ font-family: monospace; color: {COLORS["dark_ink"]}; font-weight: bold; }}
 
+
+/* Sidebar navigation */
+QFrame.sidebar {{
+    background-color: {COLORS["dark_card"]};
+    border-left: 1px solid {COLORS["dark_line"]};
+}}
+
+QPushButton.nav-item {{
+    background-color: transparent;
+    color: {COLORS["dark_ink"]};
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: right;
+    min-height: 24px;
+}}
+
+QPushButton.nav-item:hover {{
+    background-color: #173866;
+    color: {COLORS["dark_teal"]};
+}}
+
+QPushButton.nav-item-active {{
+    background-color: #173866;
+    color: {COLORS["dark_teal"]};
+    border-right: 4px solid {COLORS["dark_teal"]};
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: right;
+    min-height: 24px;
+}}
+
+QPushButton.nav-toggle {{
+    background-color: transparent;
+    color: {COLORS["dark_slate"]};
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 8px;
+    padding: 6px;
+    font-size: 13px;
+    min-height: 20px;
+}}
+
+QPushButton.nav-toggle:hover {{
+    background-color: #173866;
+    color: {COLORS["dark_teal"]};
+}}
+
+/* Summary Cards */
+QFrame.summary-card {{
+    background-color: {COLORS["dark_card"]};
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 14px;
+    padding: 16px;
+}}
+
+QFrame.summary-card:hover {{
+    border-color: {COLORS["dark_teal"]};
+    background-color: #15325E;
+}}
+
+QLabel.summary-count {{
+    color: {COLORS["dark_teal"]};
+    font-size: 26px;
+    font-weight: bold;
+}}
+
+QLabel.summary-count-warning {{
+    color: {COLORS["dark_orange"]};
+    font-size: 26px;
+    font-weight: bold;
+}}
+
+QLabel.summary-title {{
+    color: {COLORS["dark_slate"]};
+    font-size: 13px;
+    font-weight: 600;
+}}
+
+QLabel.summary-sub {{
+    color: {COLORS["dark_orange"]};
+    font-size: 12px;
+}}
+
+/* Filter labels for high contrast in dark mode */
+QLabel.filter-label {{
+    color: #C4D5DF;
+    font-weight: 500;
+    font-size: 13px;
+}}
+
+/* Calibration & Activity Badges */
+QLabel.badge-expired {{
+    background-color: rgba(179, 38, 30, 0.25);
+    color: #F87171;
+    border: 1px solid #F87171;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+QLabel.badge-valid {{
+    background-color: rgba(74, 222, 128, 0.2);
+    color: #4ADE80;
+    border: 1px solid #4ADE80;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+QLabel.badge-neutral {{
+    background-color: rgba(63, 184, 196, 0.2);
+    color: {COLORS["dark_teal"]};
+    border: 1px solid {COLORS["dark_teal"]};
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+
+/* Search input */
+QLineEdit.search-box {{
+    background-color: #071224;
+    color: {COLORS["dark_ink"]};
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 18px;
+    padding: 6px 14px;
+    font-size: 13px;
+}}
+
+QLineEdit.search-box:focus {{
+    border-color: {COLORS["dark_teal"]};
+}}
+
 QTableCornerButton::section {{
     background-color: #071224;
     border: none;
 }}
 
+/* Scrollbars - Dark Mode */
+QScrollBar:vertical {{
+    background: {COLORS["dark_surface"]};
+    width: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:vertical {{
+    background: {COLORS["dark_line"]};
+    min-height: 24px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background: {COLORS["dark_teal"]};
+}}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+    background: none;
+}}
+
+QScrollBar:horizontal {{
+    background: {COLORS["dark_surface"]};
+    height: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: {COLORS["dark_line"]};
+    min-width: 24px;
+    border-radius: 5px;
+}}
+
+QScrollBar::handle:horizontal:hover {{
+    background: {COLORS["dark_teal"]};
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+    background: none;
+}}
+
+/* QCalendarWidget - Dark Mode (Warm dark background, not absolute black #000000) */
+QCalendarWidget {{
+    background-color: {COLORS["dark_calendar_bg"]};
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 8px;
+}}
+
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background-color: {COLORS["dark_card"]};
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 4px;
+}}
+
+QCalendarWidget QToolButton#qt_calendar_prevmonth {{
+    qproperty-icon: url("{cal_prev}");
+    min-width: 24px;
+    min-height: 24px;
+}}
+
+QCalendarWidget QToolButton#qt_calendar_nextmonth {{
+    qproperty-icon: url("{cal_next}");
+    min-width: 24px;
+    min-height: 24px;
+}}
+
+QCalendarWidget QToolButton {{
+    background-color: transparent;
+    color: {COLORS["dark_ink"]};
+    font-weight: bold;
+    font-size: 13px;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-height: 22px;
+}}
+
+QCalendarWidget QToolButton:hover {{
+    background-color: #173866;
+    color: {COLORS["dark_teal"]};
+}}
+
+QCalendarWidget QToolButton:pressed {{
+    background-color: {COLORS["dark_teal"]};
+    color: #FFFFFF;
+}}
+
+QCalendarWidget QSpinBox {{
+    background-color: #0A1A33;
+    color: {COLORS["dark_ink"]};
+    font-weight: bold;
+    font-size: 13px;
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 4px;
+    padding: 2px 6px;
+}}
+
+QCalendarWidget QWidget#qt_calendar_calendarview {{
+    background-color: {COLORS["dark_calendar_bg"]};
+    alternate-background-color: {COLORS["dark_calendar_header"]};
+    color: {COLORS["dark_ink"]};
+    selection-background-color: {COLORS["dark_teal"]};
+    selection-color: #0A1A33;
+    gridline-color: {COLORS["dark_line"]};
+}}
+
+QCalendarWidget QAbstractItemView {{
+    background-color: {COLORS["dark_calendar_bg"]};
+    alternate-background-color: {COLORS["dark_calendar_header"]};
+    color: {COLORS["dark_ink"]};
+    selection-background-color: {COLORS["dark_teal"]};
+    selection-color: #0A1A33;
+    gridline-color: {COLORS["dark_line"]};
+}}
+
+QCalendarWidget QTableView {{
+    background-color: {COLORS["dark_calendar_bg"]};
+    alternate-background-color: {COLORS["dark_calendar_header"]};
+    color: {COLORS["dark_ink"]};
+    selection-background-color: {COLORS["dark_teal"]};
+    selection-color: #0A1A33;
+    gridline-color: {COLORS["dark_line"]};
+    outline: 0;
+    font-size: 13px;
+}}
+
+QCalendarWidget QTableView:enabled {{
+    color: {COLORS["dark_ink"]};
+}}
+
+QCalendarWidget QTableView:disabled {{
+    color: #627282;
+}}
+
+QCalendarWidget QHeaderView::section {{
+    background-color: {COLORS["dark_calendar_header"]};
+    color: {COLORS["dark_teal"]};
+    font-weight: bold;
+    font-size: 12px;
+    padding: 4px;
+    border: none;
+}}
+
+QCalendarWidget QMenu {{
+    background-color: {COLORS["dark_calendar_bg"]};
+    color: {COLORS["dark_ink"]};
+    border: 1px solid {COLORS["dark_line"]};
+}}
 """
 
 

@@ -210,9 +210,6 @@ class MasterRecoveryKeyDialog(QDialog):
         QTimer.singleShot(1500, lambda: btn.setText("نسخ"))
 
     def reject(self) -> None:
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            super().reject()
-            return
         reply = QMessageBox.question(
             self,
             "تأكيد حفظ المفتاح",
@@ -454,8 +451,7 @@ class ChangePasswordDialog(QDialog):
         try:
             change_own_password(self.conn, self.user_id, old_pw, new1)
             self.password_changed = True
-            if not os.environ.get("PYTEST_CURRENT_TEST"):
-                QMessageBox.information(self, "نجاح", "تم تغيير كلمة المرور بنجاح.")
+            QMessageBox.information(self, "نجاح", "تم تغيير كلمة المرور بنجاح.")
             self.accept()
         except Exception as e:
             self.lbl_error.setText(str(e))

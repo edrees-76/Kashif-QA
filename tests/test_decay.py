@@ -190,3 +190,140 @@ def test_decay_negative_inputs_rejection():
         bq_to_gbq(-1.0)
     with pytest.raises(ValueError):
         gbq_to_bq(-1.0)
+
+
+def test_tbq_conversion_and_activity_units():
+    """اختبار تحويل وحدات التيرا بيكرل ودوال التحويل الشاملة لوحدات النشاط الثماني."""
+    from kashif.core.decay import (
+        BQ_PER_TBQ,
+        ACTIVITY_UNITS,
+        bq_to_tbq,
+        tbq_to_bq,
+        convert_activity_to_bq,
+        convert_activity_from_bq,
+        format_activity_auto,
+    )
+
+    assert BQ_PER_TBQ == 1e12
+    assert tbq_to_bq(1.5) == 1.5e12
+    assert bq_to_tbq(3.0e12) == 3.0
+
+    # Test all 8 units in convert_activity_to_bq and convert_activity_from_bq
+    units_expected = [
+        ("Bq", 100.0, 100.0),
+        ("kBq", 2.5, 2500.0),
+        ("MBq", 4.0, 4_000_000.0),
+        ("GBq", 1.2, 1_200_000_000.0),
+        ("TBq", 0.5, 500_000_000_000.0),
+        ("uCi", 1.0, 37000.0),
+        ("µCi", 2.0, 74000.0),
+        ("mCi", 1.0, 37_000_000.0),
+        ("Ci", 1.0, 37_000_000_000.0),
+    ]
+    for unit, val, expected_bq in units_expected:
+        bq = convert_activity_to_bq(val, unit)
+        assert pytest.approx(bq, rel=1e-9) == expected_bq
+        val_back = convert_activity_from_bq(expected_bq, unit)
+        assert pytest.approx(val_back, rel=1e-9) == val
+
+    # Test auto formatting
+    assert "TBq" in format_activity_auto(2.5e12)
+    assert "GBq" in format_activity_auto(4.5e9)
+    assert "MBq" in format_activity_auto(1.2e6)
+    assert "kBq" in format_activity_auto(5.0e3)
+    assert "Bq" in format_activity_auto(500.0)
+
+    # Errors
+    with pytest.raises(ValueError):
+        bq_to_tbq(-1.0)
+    with pytest.raises(ValueError):
+        bq_to_tbq(float("nan"))
+    with pytest.raises(ValueError):
+        tbq_to_bq(-1.0)
+    with pytest.raises(ValueError):
+        convert_activity_to_bq(100, "unknown_unit")
+    with pytest.raises(ValueError):
+        convert_activity_to_bq(-10, "Bq")
+    with pytest.raises(ValueError):
+        convert_activity_from_bq(100, "unknown_unit")
+    with pytest.raises(ValueError):
+        convert_activity_from_bq(-10, "Bq")
+    with pytest.raises(ValueError):
+        format_activity_auto(-10)
+
+
+def test_half_life_units_conversion_and_formatting():
+    """اختبار تحويل أعمار النصف بجميع الوحدات الخمس وتنسيقها.
+    
+    حسابات يدوية صريحة للتحويل إلى أيام:
+    1) ثانية (s):
+       86400 ثانية / 86400 ثانية/يوم = 1.0 يوم
+       172800 ثانية / 86400 = 2.0 يوم
+    2) دقيقة (m):
+       1440 دقيقة / 1440 دقيقة/يوم = 1.0 يوم
+       720 دقيقة / 1440 = 0.5 يوم
+    3) ساعة (h):
+       24 ساعة / 24 ساعة/يوم = 1.0 يوم
+       6.0067 ساعة / 24 = 0.2502791666666667 يوم (مثل عمر النصف لـ Tc-99m)
+    4) يوم (d):
+       10986.72 يوم * 1.0 = 10986.72 يوم (السيزيوم-137)
+    5) سنة (y):
+       السنة النووية = 365.25 يوماً بالضبط
+       5.2714 سنة * 365.25 يوم/سنة = 1925.37885 يوم (الكوبالت-60)
+       30.08 سنة * 365.25 يوم/سنة = 10986.72 يوم
+    """
+    from kashif.core.decay import half_life_to_days, format_half_life
+
+    # 1. ثانية
+    assert half_life_to_days(86400.0, "s") == 1.0
+    assert half_life_to_days(172800.0, "s") == 2.0
+
+    # 2. دقيقة
+    assert half_life_to_days(1440.0, "m") == 1.0
+    assert half_life_to_days(720.0, "m") == 0.5
+
+    # 3. ساعة
+    assert half_life_to_days(24.0, "h") == 1.0
+    assert pytest.approx(half_life_to_days(6.0, "h"), rel=1e-9) == 0.25
+
+    # 4. يوم
+    assert half_life_to_days(10986.72, "d") == 10986.72
+
+    # 5. سنة
+    assert half_life_to_days(1.0, "y") == 365.25
+    assert pytest.approx(half_life_to_days(5.2714, "y"), rel=1e-9) == 1925.37885
+
+    # Formatting checks
+    assert "سنة" in format_half_life(5.27, "y")
+    assert "ساعة" in format_half_life(6.01, "h")
+    assert "دقيقة" in format_half_life(109.7, "m")
+    assert "ثانية" in format_half_life(30.0, "s")
+    assert "يوم" in format_half_life(271.74, "d")
+
+    # Scientific notation for very large/small
+    sci_large = format_half_life(1.5e5, "y")
+    assert "e" in sci_large.lower() or "1.500e+05" in sci_large
+    sci_small = format_half_life(0.005, "s")
+    assert "e" in sci_small.lower()
+
+    # Invalid input guards (zero, negative, NaN, Inf, invalid unit)
+    with pytest.raises(ValueError):
+        half_life_to_days(0.0, "s")
+    with pytest.raises(ValueError):
+        half_life_to_days(-10.0, "y")
+    with pytest.raises(ValueError):
+        half_life_to_days(float("nan"), "d")
+    with pytest.raises(ValueError):
+        half_life_to_days(float("inf"), "h")
+    with pytest.raises(ValueError):
+        half_life_to_days(10.0, "unknown")
+
+    with pytest.raises(ValueError):
+        format_half_life(0.0, "y")
+    with pytest.raises(ValueError):
+        format_half_life(-5.0, "y")
+    with pytest.raises(ValueError):
+        format_half_life(float("nan"), "y")
+    with pytest.raises(ValueError):
+        format_half_life(10.0, "unknown")
+

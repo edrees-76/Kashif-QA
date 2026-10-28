@@ -155,17 +155,14 @@ class ResetPasswordAdminDialog(QDialog):
         return self.edit_pw.text()
 
 
-import os
-
 def _show_msg(parent, level: str, title: str, text: str) -> None:
-    """Show message box in UI, skipping modal execution during pytest runs."""
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
-        if level == "info":
-            QMessageBox.information(parent, title, text)
-        elif level == "warn":
-            QMessageBox.warning(parent, title, text)
-        elif level == "error":
-            QMessageBox.critical(parent, title, text)
+    """Show message box in UI."""
+    if level == "info":
+        QMessageBox.information(parent, title, text)
+    elif level == "warn":
+        QMessageBox.warning(parent, title, text)
+    elif level == "error":
+        QMessageBox.critical(parent, title, text)
 
 
 class UsersManagementDialog(QDialog):

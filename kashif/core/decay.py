@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 import math
-from typing import Union
+from typing import Any, Dict, List, Optional, Union
 
 # ---------------------------------------------------------------------------
 # الثوابت النووية المعتمدة
@@ -19,6 +19,10 @@ DAYS_PER_YEAR: float = 365.25
 """عدد الأيام في السنة المعتمد في الحسابات النووية (سنة يوليانية).
 حالة التأكيد: [TBC: يحتاج تأكيد المهندس - اقتراح: 365.25 يوم/سنة كما في tasks.md TASK-1.3]
 """
+
+SECONDS_PER_DAY: float = 86400.0
+MINUTES_PER_DAY: float = 1440.0
+HOURS_PER_DAY: float = 24.0
 
 HALF_LIFE_CO60_DAYS: float = 1925.38
 """نصف عمر الكوبالت-60 بالأيام (5.2714 سنة * 365.25 يوم/سنة = 1925.38 يوماً).
@@ -47,6 +51,32 @@ BQ_PER_CI: float = 37000000000.0
 """معامل التحويل من كوري إلى بيكرل (1 Ci = 3.7e10 Bq).
 حالة التأكيد: CONFIRMED
 """
+
+BQ_PER_TBQ: float = 1000000000000.0
+"""معامل التحويل من تيرا بيكرل إلى بيكرل (1 TBq = 1e12 Bq).
+حالة التأكيد: CONFIRMED
+"""
+
+# قائمة تهيئة وحدات النشاط الإشعاعي (الرمز، الاسم العربي، المعامل إلى Bq)
+ACTIVITY_UNITS: Dict[str, Dict[str, Any]] = {
+    "Bq": {"symbol": "Bq", "name_ar": "بيكرل (Bq)", "factor": 1.0},
+    "kBq": {"symbol": "kBq", "name_ar": "كيلو بيكرل (kBq)", "factor": 1000.0},
+    "MBq": {"symbol": "MBq", "name_ar": "ميغا بيكرل (MBq)", "factor": 1000000.0},
+    "GBq": {"symbol": "GBq", "name_ar": "غيغا بيكرل (GBq)", "factor": 1000000000.0},
+    "TBq": {"symbol": "TBq", "name_ar": "تيرا بيكرل (TBq)", "factor": 1000000000000.0},
+    "uCi": {"symbol": "µCi", "name_ar": "ميكروكوري (µCi)", "factor": 37000.0},
+    "mCi": {"symbol": "mCi", "name_ar": "ميللي كوري (mCi)", "factor": 37000000.0},
+    "Ci": {"symbol": "Ci", "name_ar": "كوري (Ci)", "factor": 37000000000.0},
+}
+
+# قائمة تهيئة وحدات عمر النصف (ثانية، دقيقة، ساعة، يوم، سنة)
+HALF_LIFE_UNITS: Dict[str, Dict[str, Any]] = {
+    "s": {"symbol": "s", "name_ar": "ثانية", "days_factor": 1.0 / 86400.0},
+    "m": {"symbol": "m", "name_ar": "دقيقة", "days_factor": 1.0 / 1440.0},
+    "h": {"symbol": "h", "name_ar": "ساعة", "days_factor": 1.0 / 24.0},
+    "d": {"symbol": "d", "name_ar": "يوم", "days_factor": 1.0},
+    "y": {"symbol": "y", "name_ar": "سنة", "days_factor": 365.25},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -213,3 +243,88 @@ def gbq_to_bq(gbq: float) -> float:
     if gbq < 0:
         raise ValueError("الفعالية لا يجوز أن تكون سالبة")
     return float(gbq * 1000000000.0)
+
+
+def bq_to_tbq(bq: float) -> float:
+    """تحويل من بيكرل إلى تيرا بيكرل (1 TBq = 1e12 Bq)."""
+    if not math.isfinite(bq) or bq < 0:
+        raise ValueError("الفعالية لا يجوز أن تكون سالبة أو غير منتهية")
+    return float(bq / BQ_PER_TBQ)
+
+
+def tbq_to_bq(tbq: float) -> float:
+    """تحويل من تيرا بيكرل إلى بيكرل."""
+    if not math.isfinite(tbq) or tbq < 0:
+        raise ValueError("الفعالية لا يجوز أن تكون سالبة أو غير منتهية")
+    return float(tbq * BQ_PER_TBQ)
+
+
+def convert_activity_to_bq(value: float, unit: str) -> float:
+    """تحويل أي قيمة نشاط إشعاعي بأي وحدة معتمدة إلى بيكرل (Bq)."""
+    if not math.isfinite(value) or value < 0:
+        raise ValueError("قيمة النشاط الإشعاعي لا يجوز أن تكون سالبة أو غير منتهية")
+    u = unit.strip()
+    if u in ("µCi", "uCi"):
+        factor = BQ_PER_UCI
+    elif u in ACTIVITY_UNITS:
+        factor = float(ACTIVITY_UNITS[u]["factor"])
+    else:
+        raise ValueError(f"وحدة النشاط الإشعاعي غير معروفة: {unit}")
+    return float(value * factor)
+
+
+def convert_activity_from_bq(activity_bq: float, target_unit: str) -> float:
+    """تحويل النشاط بالبيكرل إلى وحدة مستهدفة."""
+    if not math.isfinite(activity_bq) or activity_bq < 0:
+        raise ValueError("النشاط الإشعاعي لا يجوز أن يكون سالباً أو غير منتهٍ")
+    u = target_unit.strip()
+    if u in ("µCi", "uCi"):
+        factor = BQ_PER_UCI
+    elif u in ACTIVITY_UNITS:
+        factor = float(ACTIVITY_UNITS[u]["factor"])
+    else:
+        raise ValueError(f"وحدة النشاط الإشعاعي غير معروفة: {target_unit}")
+    return float(activity_bq / factor)
+
+
+def format_activity_auto(activity_bq: float) -> str:
+    """تنسيق النشاط الإشعاعي بالوحدة المناسبة تلقائياً (Bq, kBq, MBq, GBq, TBq)."""
+    if not math.isfinite(activity_bq) or activity_bq < 0:
+        raise ValueError("النشاط الإشعاعي غير صالح للتنسيق")
+    if activity_bq >= 1e12:
+        return f"{activity_bq / 1e12:.3f} TBq"
+    if activity_bq >= 1e9:
+        return f"{activity_bq / 1e9:.3f} GBq"
+    if activity_bq >= 1e6:
+        return f"{activity_bq / 1e6:.3f} MBq"
+    if activity_bq >= 1e3:
+        return f"{activity_bq / 1e3:.3f} kBq"
+    return f"{activity_bq:.1f} Bq"
+
+
+def half_life_to_days(value: float, unit: str) -> float:
+    """تحويل عمر النصف من وحدته الأصلية (s, m, h, d, y) إلى أيام.
+    
+    يرفض القيم الصفرية والسالبة وغير المنتهية (NaN/inf).
+    """
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("عمر النصف يجب أن يكون قيمة موجبة تماماً ومحدودة (ليس صفراً ولا سالباً ولا NaN/inf)")
+    u = unit.strip().lower()
+    if u not in HALF_LIFE_UNITS:
+        raise ValueError(f"وحدة عمر النصف '{unit}' غير مدعومة. الوحدات المتاحة: s, m, h, d, y")
+    return float(value * HALF_LIFE_UNITS[u]["days_factor"])
+
+
+def format_half_life(value: float, unit: str) -> str:
+    """تنسيق عمر النصف مع وحدته الأصلية باللغة العربية مع صيغة علمية للقيم الكبيرة أو الصغيرة جداً."""
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("عمر النصف يجب أن يكون قيمة موجبة ومحدودة")
+    u = unit.strip().lower()
+    if u not in HALF_LIFE_UNITS:
+        raise ValueError(f"وحدة عمر النصف '{unit}' غير مدعومة")
+    unit_name = HALF_LIFE_UNITS[u]["name_ar"]
+    if value >= 1e4 or value < 1e-2:
+        return f"{value:.3e} {unit_name}"
+    val_str = f"{value:.4f}".rstrip("0").rstrip(".")
+    return f"{val_str} {unit_name}"
+

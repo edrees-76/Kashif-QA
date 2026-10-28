@@ -29,6 +29,7 @@ from kashif.core.models import (
     Nuclide,
     PreampType,
     RadioactiveSource,
+    SourceIsotope,
     UserRole,
     Verdict,
     VoltagePolarity,
@@ -175,27 +176,36 @@ def test_instrument_model_and_shaping_range():
 
 
 def test_radioactive_source_valid_and_validation():
-    """نموذج المصدر المشع والتحقق من الفعالية وعمر النصف."""
-    src = RadioactiveSource(
-        nuclide=Nuclide.CO_60,
-        source_code="SRC-CO60-01",
-        serial_number="CS-60-2024-01",
-        cert_activity_bq=37000.0,
-        cert_date=date(2024, 1, 1),
-        half_life_days=1925.38,
-    )
-    assert src.cert_activity_bq == 37000.0
+    """نموذج المصدر المشع والنظائر المشعة والتحقق من الفعالية وقائمة النظائر."""
+    iso1 = SourceIsotope(nuclide_code="Co-60", cert_activity_bq=37000.0, cert_date=date(2024, 1, 1))
+    iso2 = SourceIsotope(nuclide_code="Cs-137", cert_activity_bq=18500.0)
 
-    # رفض الفعالية غير الموجبة
+    src = RadioactiveSource(
+        source_code="SRC-MULTI-01",
+        serial_number="CS-60-2024-01",
+        cert_date=date(2024, 1, 1),
+        isotopes=[iso1, iso2],
+    )
+    assert src.total_activity_bq == 55500.0
+    assert src.primary_nuclide == "Co-60"
+    assert len(src.isotopes) == 2
+
+    # رفض قائمة نظائر فارغة
     with pytest.raises(ValidationError):
         RadioactiveSource(
-            nuclide=Nuclide.CS_137,
-            source_code="SRC-CS-02",
-            serial_number="CS-137-02",
-            cert_activity_bq=0.0,
+            source_code="SRC-EMPTY-01",
+            serial_number="SN-01",
             cert_date=date(2024, 1, 1),
-            half_life_days=10986.72,
+            isotopes=[],
         )
+
+    # رفض فعالية نظير غير موجبة
+    with pytest.raises(ValidationError):
+        SourceIsotope(nuclide_code="Cs-137", cert_activity_bq=0.0)
+
+    # رفض رمز نظير فارغ
+    with pytest.raises(ValidationError):
+        SourceIsotope(nuclide_code="  ", cert_activity_bq=100.0)
 
 
 def test_measurement_snapshot_json_determinism():
@@ -253,12 +263,10 @@ def test_models_additional_validations():
     # RadioactiveSource empty code
     with pytest.raises(ValidationError):
         RadioactiveSource(
-            nuclide=Nuclide.CO_60,
             source_code="  ",
             serial_number="SN-1",
-            cert_activity_bq=1000.0,
             cert_date=date(2025, 1, 1),
-            half_life_days=1925.38,
+            isotopes=[SourceIsotope(nuclide_code="Co-60", cert_activity_bq=1000.0)],
         )
 
     # NaIDetector empty model

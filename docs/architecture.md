@@ -358,7 +358,7 @@ erDiagram
 1. **قيود التفرد المركبة (Composite Uniqueness):**
    - في جدول `DETECTORS`: `UNIQUE(manufacturer, serial_number)`.
    - في جدول `INSTRUMENTS`: `UNIQUE(manufacturer, serial_number)`.
-   - في جدول `SOURCES`: `UNIQUE(source_code)` و `UNIQUE(nuclide, serial_number)`.
+   - في جدول `SOURCES`: `UNIQUE(source_code)`؛ والنظائر في جدول `SOURCE_ISOTOPES` (مصدر، نظير، نشاط معتمد بالبيكرل، تاريخ شهادة اختياري)، مع جدول مرجعي `NUCLIDES` (القرار 13). تفرد الرقم التسلسلي يُتحقق منه في المستودع: لا يتكرر لمصدر آخر يشارك أي نظير (بدل `UNIQUE(nuclide, serial_number)`).
 2. **سياسة ترقيم التقارير (Report Numbering):**
    - حقل `report_number` في جدول `INSPECTIONS` يظل فارغاً (`NULL`) أثناء مرحلة المسودة `DRAFT` و `PENDING_APPROVAL`.
    - يُولّد الرقم التسلسلي تلقائياً فقط عند تنفيذ إجراء الاعتماد (`APPROVED`) لضمان عدم حدوث أي فجوات تسلسلية في السجل الرسمي للمعمل.

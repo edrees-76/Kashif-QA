@@ -265,8 +265,8 @@ def authenticate_user(
                 conn.commit()
                 user_dict["failed_attempts"] = 0
                 user_dict["locked_until"] = None
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as parse_err:
+            logger.warning("Corrupt locked_until timestamp '%s' for user %s: %s", locked_until_str, user["id"], parse_err)
 
     # 3. Check if account is deactivated
     if not user_dict.get("is_active", 1):
