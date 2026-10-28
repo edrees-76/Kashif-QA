@@ -299,3 +299,116 @@ def test_models_additional_validations():
     assert "NAI-01" in s
     assert "7.26" in s
 
+
+
+def test_semiconductor_type_enum():
+    """Verify SemiconductorType enum values."""
+    from kashif.core.models import SemiconductorType
+    assert SemiconductorType.P_TYPE.value == "P_TYPE"
+    assert SemiconductorType.N_TYPE.value == "N_TYPE"
+    assert SemiconductorType.UNSPECIFIED.value == "UNSPECIFIED"
+
+
+def test_hpge_detector_semiconductor_type_and_ramp_rate():
+    """Test HPGeDetector semiconductor_type validation and ramp rate reference requirements."""
+    from kashif.core.models import HPGeDetector, SemiconductorType, VoltagePolarity
+
+    # Default ramp rate 10.0 V/s does not require reference
+    det = HPGeDetector(
+        code="HPGE-M-1",
+        manufacturer="Canberra",
+        model="GC2018",
+        serial_number="SN-M-1",
+        semiconductor_type=SemiconductorType.P_TYPE,
+        nominal_voltage=3000.0,
+        voltage_polarity=VoltagePolarity.POSITIVE,
+        certified_polarity=VoltagePolarity.POSITIVE,
+        certificate_ref="CERT-01",
+        cooling_hours_cert=8.0,
+        hv_ramp_max_v_per_s=10.0,
+    )
+    assert det.semiconductor_type == SemiconductorType.P_TYPE
+    assert det.cooling_hours_cert == 8.0
+    assert det.hv_ramp_max_v_per_s == 10.0
+
+    # Non-default ramp rate (e.g. 5.0 V/s) WITHOUT reference raises ValidationError
+    with pytest.raises(ValidationError) as exc:
+        HPGeDetector(
+            code="HPGE-M-2",
+            manufacturer="Ortec",
+            model="GEM",
+            serial_number="SN-M-2",
+            semiconductor_type=SemiconductorType.N_TYPE,
+            nominal_voltage=2500.0,
+            hv_ramp_max_v_per_s=5.0,
+            hv_ramp_reference=None,
+        )
+    assert "مرجع دليل المصنّع" in str(exc.value)
+
+    # Non-default ramp rate WITH reference is valid
+    det_custom_ramp = HPGeDetector(
+        code="HPGE-M-3",
+        manufacturer="Ortec",
+        model="GEM",
+        serial_number="SN-M-3",
+        semiconductor_type=SemiconductorType.N_TYPE,
+        nominal_voltage=2500.0,
+        hv_ramp_max_v_per_s=5.0,
+        hv_ramp_reference="Ortec User Manual 2024 page 12",
+    )
+    assert det_custom_ramp.hv_ramp_max_v_per_s == 5.0
+    assert det_custom_ramp.hv_ramp_reference == "Ortec User Manual 2024 page 12"
+
+
+def test_nai_detector_pmt_tolerance():
+    """Test NaIDetector optional pmt_voltage_tolerance_pct."""
+    from kashif.core.models import NaIDetector
+
+    # Without tolerance
+    nai = NaIDetector(
+        code="NAI-T-1",
+        manufacturer="Bicron",
+        model="3M3",
+        serial_number="SN-NAI-T1",
+        diameter_inch=3.0,
+        height_inch=3.0,
+        nominal_voltage=950.0,
+    )
+    assert nai.pmt_voltage_tolerance_pct is None
+
+    # With tolerance
+    nai_tol = NaIDetector(
+        code="NAI-T-2",
+        manufacturer="Bicron",
+        model="3M3",
+        serial_number="SN-NAI-T2",
+        diameter_inch=3.0,
+        height_inch=3.0,
+        nominal_voltage=950.0,
+        pmt_voltage_tolerance_pct=1.5,
+    )
+    assert nai_tol.pmt_voltage_tolerance_pct == 1.5
+
+
+def test_nai_measurement_drift_pct():
+    """Test NaIMeasurement centroid_drift_pct field and snapshot."""
+    from kashif.core.models import NaIMeasurement
+
+    meas = NaIMeasurement(
+        applied_voltage=950.0,
+        resolution_pct=7.2,
+        centroid_drift_pct=0.45,
+        centroid_drift_channels=1.5,
+    )
+    assert meas.centroid_drift_pct == 0.45
+    assert meas.centroid_drift_channels == 1.5
+
+
+def test_radioactive_source_cert_date_auto_populate():
+    """Test auto population of cert_date from first isotope when cert_date is None."""
+    src = RadioactiveSource(
+        source_code="SRC-POP-1",
+        serial_number="SN-P1",
+        isotopes=[SourceIsotope(nuclide_code="Co-60", cert_activity_bq=1000.0, cert_date=date(2025, 1, 1))],
+    )
+    assert src.cert_date == date(2025, 1, 1)

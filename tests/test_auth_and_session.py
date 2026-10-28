@@ -676,3 +676,28 @@ def test_first_admin_dialog_fields_are_visible(qtbot, db_conn):
         assert field.isVisible()
         assert field.height() > 10
     assert dlg.lbl_error.text() == ""
+
+
+def test_idle_lock_event_filter_no_accumulation(qtbot, db_conn):
+    """TASK-1.9: Verify that IdleLock event filter is removed on stop() and does not accumulate."""
+    from PyQt6.QtWidgets import QApplication, QWidget
+    from kashif.gui.idle_lock import IdleLock
+
+    app = QApplication.instance()
+    assert app is not None
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+
+    lock1 = IdleLock(parent, conn=db_conn, minutes=15)
+    assert lock1._filter_installed is True
+
+    lock1.stop()
+    assert lock1._filter_installed is False
+
+    # Simulate repeated logins / logouts
+    for _ in range(5):
+        lock = IdleLock(parent, conn=db_conn, minutes=15)
+        assert lock._filter_installed is True
+        lock.stop()
+        assert lock._filter_installed is False

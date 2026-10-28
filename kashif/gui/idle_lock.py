@@ -3,6 +3,7 @@
 Locks the interface after a period of user inactivity and prompts for password verification.
 """
 
+import logging
 import sqlite3
 from typing import Optional
 
@@ -24,6 +25,8 @@ from kashif.gui.theme import COLORS, get_stylesheet
 from kashif.services.audit_service import record_audit_event
 from kashif.services.security import AuthenticationError, authenticate_user
 from kashif.services.session import Session
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_IDLE_MINUTES = 15
 _ACTIVITY_EVENTS = {
@@ -135,11 +138,39 @@ class IdleLock(QObject):
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self._on_timeout)
 
+        self._filter_installed = False
         app = QApplication.instance()
         if app:
             app.installEventFilter(self)
+            self._filter_installed = True
+
+        if hasattr(self, "destroyed"):
+            self.destroyed.connect(lambda *_: self._remove_filter())
+        if self.window and hasattr(self.window, "destroyed"):
+            self.window.destroyed.connect(lambda *_: self._remove_filter())
 
         self.restart()
+
+    def stop(self) -> None:
+        """Stop inactivity timer and remove eventFilter from QApplication."""
+        self.timer.stop()
+        self._remove_filter()
+
+    def _remove_filter(self) -> None:
+        if self._filter_installed:
+            app = QApplication.instance()
+            if app:
+                try:
+                    app.removeEventFilter(self)
+                except RuntimeError as e:
+                    logger.debug("RuntimeError removing IdleLock event filter (object or QApplication deleted): %s", e)
+                except Exception as e:
+                    logger.warning("Unexpected error removing IdleLock event filter: %s", e)
+            self._filter_installed = False
+
+    def close(self) -> None:
+        """Close/destroy handler to ensure event filter cleanup."""
+        self.stop()
 
     def restart(self) -> None:
         """Reset or restart the inactivity timer."""
@@ -149,8 +180,10 @@ class IdleLock(QObject):
             self.timer.stop()
 
     def eventFilter(self, obj, ev):
-        if not self.locked and ev.type() in _ACTIVITY_EVENTS and self.timer.isActive():
-            self.timer.start()
+        if not getattr(self, "locked", False) and getattr(self, "_filter_installed", False):
+            timer = getattr(self, "timer", None)
+            if timer and timer.isActive() and ev.type() in _ACTIVITY_EVENTS:
+                timer.start()
         return False
 
     def _on_timeout(self) -> None:

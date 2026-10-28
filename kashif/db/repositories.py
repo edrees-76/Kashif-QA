@@ -24,6 +24,7 @@ from kashif.core.models import (
     HPGeDetector,
     Instrument,
     NaIDetector,
+    SemiconductorType,
     RadioactiveSource,
     SourceIsotope,
 )
@@ -96,25 +97,41 @@ class DetectorRepository:
 
         # التحقق من صحة النموذج عبر Pydantic
         if isinstance(detector, HPGeDetector):
+            if detector.semiconductor_type in (None, SemiconductorType.UNSPECIFIED):
+                raise ValueError("نوع البلورة (P_TYPE أو N_TYPE) إلزامي ولا يمكن حفظ الكاشف كـ 'غير محدد'")
             d_type = "HPGE"
             crystal_type = detector.crystal_type.value if detector.crystal_type else None
+            semiconductor_type = detector.semiconductor_type.value
             window_type = detector.window_type.value if detector.window_type else None
             window_status = detector.beryllium_window_status.value if detector.beryllium_window_status else None
             preamp_type = detector.preamp_type.value if detector.preamp_type else None
             polarity = detector.voltage_polarity.value if detector.voltage_polarity else None
+            certified_polarity = detector.certified_polarity.value if detector.certified_polarity else None
+            certificate_ref = detector.certificate_ref
+            cooling_hours_cert = detector.cooling_hours_cert
+            hv_ramp_max_v_per_s = detector.hv_ramp_max_v_per_s
+            hv_ramp_reference = detector.hv_ramp_reference
             fwhm = detector.nominal_fwhm_kev
             eff = detector.nominal_efficiency_pct
             res = None
+            pmt_tol = None
         elif isinstance(detector, NaIDetector):
             d_type = "NAI"
             crystal_type = None
+            semiconductor_type = None
             window_type = None
             window_status = None
             preamp_type = None
             polarity = "POSITIVE"
+            certified_polarity = None
+            certificate_ref = None
+            cooling_hours_cert = None
+            hv_ramp_max_v_per_s = 10.0
+            hv_ramp_reference = None
             fwhm = None
             eff = None
             res = detector.nominal_resolution_pct
+            pmt_tol = detector.pmt_voltage_tolerance_pct
         else:
             raise TypeError("النموذج يجب أن يكون HPGeDetector أو NaIDetector.")
 
@@ -136,8 +153,10 @@ class DetectorRepository:
                     nominal_voltage, voltage_polarity, nominal_fwhm_kev,
                     nominal_efficiency_pct, nominal_resolution_pct,
                     diameter_inch, height_inch, facility_name, status, notes,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?);
+                    semiconductor_type, certified_polarity, certificate_ref,
+                    cooling_hours_cert, hv_ramp_max_v_per_s, hv_ramp_reference,
+                    pmt_voltage_tolerance_pct, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     detector.code,
@@ -158,6 +177,13 @@ class DetectorRepository:
                     detector.height_inch,
                     detector.facility_name,
                     detector.notes,
+                    semiconductor_type,
+                    certified_polarity,
+                    certificate_ref,
+                    cooling_hours_cert,
+                    hv_ramp_max_v_per_s,
+                    hv_ramp_reference,
+                    pmt_tol,
                     now,
                     now,
                 ),
@@ -195,25 +221,41 @@ class DetectorRepository:
             raise EntityNotFoundError(f"الكاشف ذو المعرّف {detector_id} غير موجود.")
 
         if isinstance(detector, HPGeDetector):
+            if detector.semiconductor_type in (None, SemiconductorType.UNSPECIFIED):
+                raise ValueError("نوع البلورة (P_TYPE أو N_TYPE) إلزامي ولا يمكن حفظ الكاشف كـ 'غير محدد'")
             d_type = "HPGE"
             crystal_type = detector.crystal_type.value if detector.crystal_type else None
+            semiconductor_type = detector.semiconductor_type.value
             window_type = detector.window_type.value if detector.window_type else None
             window_status = detector.beryllium_window_status.value if detector.beryllium_window_status else None
             preamp_type = detector.preamp_type.value if detector.preamp_type else None
             polarity = detector.voltage_polarity.value if detector.voltage_polarity else None
+            certified_polarity = detector.certified_polarity.value if detector.certified_polarity else None
+            certificate_ref = detector.certificate_ref
+            cooling_hours_cert = detector.cooling_hours_cert
+            hv_ramp_max_v_per_s = detector.hv_ramp_max_v_per_s
+            hv_ramp_reference = detector.hv_ramp_reference
             fwhm = detector.nominal_fwhm_kev
             eff = detector.nominal_efficiency_pct
             res = None
+            pmt_tol = None
         elif isinstance(detector, NaIDetector):
             d_type = "NAI"
             crystal_type = None
+            semiconductor_type = None
             window_type = None
             window_status = None
             preamp_type = None
             polarity = "POSITIVE"
+            certified_polarity = None
+            certificate_ref = None
+            cooling_hours_cert = None
+            hv_ramp_max_v_per_s = 10.0
+            hv_ramp_reference = None
             fwhm = None
             eff = None
             res = detector.nominal_resolution_pct
+            pmt_tol = detector.pmt_voltage_tolerance_pct
         else:
             raise TypeError("النموذج يجب أن يكون HPGeDetector أو NaIDetector.")
 
@@ -236,7 +278,11 @@ class DetectorRepository:
                     nominal_voltage = ?, voltage_polarity = ?,
                     nominal_fwhm_kev = ?, nominal_efficiency_pct = ?,
                     nominal_resolution_pct = ?, diameter_inch = ?,
-                    height_inch = ?, facility_name = ?, notes = ?, updated_at = ?
+                    height_inch = ?, facility_name = ?, notes = ?,
+                    semiconductor_type = ?, certified_polarity = ?,
+                    certificate_ref = ?, cooling_hours_cert = ?,
+                    hv_ramp_max_v_per_s = ?, hv_ramp_reference = ?,
+                    pmt_voltage_tolerance_pct = ?, updated_at = ?
                 WHERE id = ?;
                 """,
                 (
@@ -258,6 +304,13 @@ class DetectorRepository:
                     detector.height_inch,
                     detector.facility_name,
                     detector.notes,
+                    semiconductor_type,
+                    certified_polarity,
+                    certificate_ref,
+                    cooling_hours_cert,
+                    hv_ramp_max_v_per_s,
+                    hv_ramp_reference,
+                    pmt_tol,
                     now,
                     detector_id,
                 ),
@@ -656,6 +709,9 @@ class NuclideRepository:
         half_life_unit: str,
         reference: str,
         session: Session,
+        half_life_uncertainty: Optional[float] = None,
+        reference_url: Optional[str] = None,
+        reference_accessed: Optional[str] = None,
     ) -> Dict[str, Any]:
         """إضافة نظير مشع مخصص مع التحقق الصارم والتدقيق."""
         if not session.can("manage_sources"):
@@ -716,8 +772,10 @@ class NuclideRepository:
                 """
                 INSERT INTO nuclides (
                     code, name_ar, name_en, half_life_days, half_life_value,
-                    half_life_unit, reference, confirmed, is_custom, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?);
+                    half_life_unit, reference, confirmed, is_custom,
+                    half_life_uncertainty, reference_url, reference_accessed,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?);
                 """,
                 (
                     code_clean,
@@ -727,6 +785,9 @@ class NuclideRepository:
                     val_float,
                     half_life_unit,
                     ref_clean,
+                    half_life_uncertainty,
+                    reference_url,
+                    reference_accessed,
                     now,
                     now,
                 ),
@@ -740,6 +801,9 @@ class NuclideRepository:
                 "half_life_value": val_float,
                 "half_life_unit": half_life_unit,
                 "reference": ref_clean,
+                "half_life_uncertainty": half_life_uncertainty,
+                "reference_url": reference_url,
+                "reference_accessed": reference_accessed,
                 "confirmed": 0,
                 "is_custom": 1,
                 "created_at": now,
@@ -775,6 +839,9 @@ class NuclideRepository:
         half_life_unit: str,
         reference: str,
         session: Session,
+        half_life_uncertainty: Optional[float] = None,
+        reference_url: Optional[str] = None,
+        reference_accessed: Optional[str] = None,
     ) -> Dict[str, Any]:
         """تعديل نظير مشع مخصص (ممنوع للنظائر القياسية وللنظائر المستخدمة في مصادر)."""
         if not session.can("manage_sources"):
@@ -823,11 +890,16 @@ class NuclideRepository:
 
         cursor = self.conn.cursor()
         try:
+            uncert_val = half_life_uncertainty if half_life_uncertainty is not None else existing.get("half_life_uncertainty")
+            url_val = reference_url if reference_url is not None else existing.get("reference_url")
+            acc_val = reference_accessed if reference_accessed is not None else existing.get("reference_accessed")
+
             cursor.execute(
                 """
                 UPDATE nuclides SET
                     name_ar = ?, name_en = ?, half_life_days = ?,
                     half_life_value = ?, half_life_unit = ?, reference = ?,
+                    half_life_uncertainty = ?, reference_url = ?, reference_accessed = ?,
                     updated_at = ?
                 WHERE code = ?;
                 """,
@@ -838,6 +910,9 @@ class NuclideRepository:
                     val_float,
                     half_life_unit,
                     ref_clean,
+                    uncert_val,
+                    url_val,
+                    acc_val,
                     now,
                     code_clean,
                 ),
@@ -851,6 +926,9 @@ class NuclideRepository:
                 "half_life_value": val_float,
                 "half_life_unit": half_life_unit,
                 "reference": ref_clean,
+                "half_life_uncertainty": uncert_val,
+                "reference_url": url_val,
+                "reference_accessed": acc_val,
                 "updated_at": now,
             }
 

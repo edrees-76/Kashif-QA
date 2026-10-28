@@ -57,7 +57,7 @@ from kashif.db.repositories import (
     NuclideRepository,
     SourceRepository,
 )
-from kashif.gui.bidi import format_mixed_text, isolate_ltr
+from kashif.gui.bidi import format_mixed_text, isolate_ltr, isolate_unit_bidi
 from kashif.gui.theme import get_stylesheet
 from kashif.services.session import Session
 
@@ -94,6 +94,210 @@ def _exec_dlg(dlg: QDialog) -> int:
 # ---------------------------------------------------------------------------
 # Add Custom Nuclide Dialog
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Radionuclide Detail Card and Reference Catalog Dialogs
+# ---------------------------------------------------------------------------
+
+class NuclideDetailCardDialog(QDialog):
+    """Detailed inspection dialog for a radionuclide reference specification."""
+
+    def __init__(self, data: Dict[str, Any], parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.data = data
+        code = data.get("code") or data.get("nuclide_code") or "—"
+        self.setWindowTitle(f"بطاقة النظير المشع المرجعية — {code}")
+        self.setMinimumWidth(480)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setStyleSheet(get_stylesheet())
+        self._init_ui()
+
+    def _init_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(12)
+
+        card = QFrame()
+        card.setProperty("class", "card")
+        form = QFormLayout(card)
+        form.setSpacing(10)
+
+        d = self.data
+        code = d.get("code") or d.get("nuclide_code") or "—"
+        name_ar = d.get("name_ar") or "—"
+        name_en = d.get("name_en") or "—"
+        form.addRow("رمز النظير المشع:", QLabel(isolate_ltr(str(code))))
+        form.addRow("الاسم بالعربية:", QLabel(str(name_ar)))
+        form.addRow("الاسم بالإنجليزية:", QLabel(isolate_ltr(str(name_en))))
+
+        hl_val = d.get("half_life_value")
+        hl_unit = d.get("half_life_unit")
+        hl_days = d.get("half_life_days")
+        if hl_val is not None and hl_unit:
+            hl_display = f"{hl_val} {hl_unit} ({hl_days:,.2f} يوم)" if hl_days else f"{hl_val} {hl_unit}"
+        elif hl_days:
+            hl_display = f"{hl_days:,.2f} يوم"
+        else:
+            hl_display = "—"
+        form.addRow("عمر النصف (T½):", QLabel(format_mixed_text(hl_display)))
+
+        hl_unc = d.get("half_life_uncertainty")
+        if hl_unc is not None:
+            unc_unit = hl_unit or "d"
+            unc_display = f"± {hl_unc} {unc_unit}"
+        else:
+            unc_display = "غير مسجّل"
+        form.addRow("عدم اليقين في عمر النصف:", QLabel(format_mixed_text(unc_display)))
+
+        form.addRow("المصدر المرجعي المعتمد:", QLabel(format_mixed_text(str(d.get("reference") or "—"))))
+
+        ref_url = d.get("reference_url")
+        lbl_url = QLabel(isolate_ltr(str(ref_url)) if ref_url else "—")
+        lbl_url.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        form.addRow("رابط الملف المرجعي:", lbl_url)
+
+        ref_acc = d.get("reference_accessed") or "—"
+        form.addRow("تاريخ الاطلاع على المرجع:", QLabel(str(ref_acc)))
+
+        # Confirmation badge
+        lbl_status = QLabel()
+        is_custom = d.get("is_custom") == 1
+        confirmed = d.get("confirmed") == 1
+        if is_custom:
+            lbl_status.setText("نظير مخصص معرّف محلياً")
+            lbl_status.setProperty("class", "badge-neutral")
+        elif confirmed:
+            lbl_status.setText("✓ مؤكَّد (LNHB/DDEP معتمد)")
+            lbl_status.setProperty("class", "badge-valid")
+        else:
+            lbl_status.setText("⚠️ مقترح / غير متحقَّق منه (Unconfirmed)")
+            lbl_status.setProperty("class", "badge-warning")
+        form.addRow("حالة الاعتماد والتأكيد:", lbl_status)
+
+        layout.addWidget(card)
+
+        btn_close = QPushButton("إغلاق")
+        btn_close.setProperty("class", "secondary")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
+
+
+class NuclidesReferenceDialog(QDialog):
+    """Dialog displaying a table of all radionuclides with uncertainties and references."""
+
+    def __init__(self, repo: NuclideRepository, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.repo = repo
+        self.nuclides_data: List[Dict[str, Any]] = []
+        self.setWindowTitle("دليل النظائر المشعة والمراجع المعتمدة — منظومة كاشف")
+        self.setMinimumWidth(820)
+        self.setMinimumHeight(480)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setStyleSheet(get_stylesheet())
+        self._init_ui()
+        self._load_data()
+
+    def _init_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        hdr = QHBoxLayout()
+        title = QLabel("قاعدة بيانات النظائر المشعة وأعمار النصف والمراجع المعتمدة")
+        title.setProperty("class", "title")
+        hdr.addWidget(title)
+        hdr.addStretch()
+        layout.addLayout(hdr)
+
+        self.edit_search = QLineEdit()
+        self.edit_search.setProperty("class", "search-box")
+        self.edit_search.setPlaceholderText("🔍 بحث بالرمز أو الاسم العربي أو المرجع...")
+        self.edit_search.textChanged.connect(self._load_data)
+        layout.addWidget(self.edit_search)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels([
+            "الرمز",
+            "الاسم بالعربية",
+            "عمر النصف (T½)",
+            "عدم اليقين",
+            "المصدر المرجعي",
+            "حالة التأكيد",
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.doubleClicked.connect(self._on_row_double_clicked)
+        layout.addWidget(self.table)
+
+        btn_row = QHBoxLayout()
+        self.btn_inspect = QPushButton("👁️ عرض بطاقة النظير التفصيلية")
+        self.btn_inspect.setProperty("class", "secondary")
+        self.btn_inspect.clicked.connect(self._on_row_double_clicked)
+        btn_row.addWidget(self.btn_inspect)
+
+        btn_row.addStretch()
+        btn_close = QPushButton("إغلاق")
+        btn_close.setProperty("class", "secondary")
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+    def _load_data(self) -> None:
+        q = self.edit_search.text().strip().lower()
+        all_nucs = self.repo.list_all()
+        if q:
+            filtered = [
+                n for n in all_nucs
+                if q in n.get("code", "").lower()
+                or q in n.get("name_ar", "").lower()
+                or q in n.get("name_en", "").lower()
+                or q in n.get("reference", "").lower()
+            ]
+        else:
+            filtered = all_nucs
+
+        self.nuclides_data = filtered
+        self.table.setRowCount(len(filtered))
+        for row, n in enumerate(filtered):
+            self.table.setItem(row, 0, QTableWidgetItem(n["code"]))
+            self.table.setItem(row, 1, QTableWidgetItem(n["name_ar"]))
+
+            hl_val = n.get("half_life_value")
+            hl_unit = n.get("half_life_unit")
+            hl_str = f"{hl_val} {hl_unit}" if hl_val and hl_unit else f"{n.get('half_life_days', 0):,.2f} d"
+            self.table.setItem(row, 2, QTableWidgetItem(hl_str))
+
+            unc = n.get("half_life_uncertainty")
+            unc_str = f"± {unc} {hl_unit or ''}" if unc is not None else "—"
+            self.table.setItem(row, 3, QTableWidgetItem(unc_str))
+
+            ref_str = n.get("reference") or "—"
+            self.table.setItem(row, 4, QTableWidgetItem(ref_str))
+
+            lbl_st = QLabel()
+            lbl_st.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            if n.get("is_custom"):
+                lbl_st.setText("مخصص")
+                lbl_st.setProperty("class", "badge-neutral")
+            elif n.get("confirmed"):
+                lbl_st.setText("✓ مؤكَّد")
+                lbl_st.setProperty("class", "badge-valid")
+            else:
+                lbl_st.setText("⚠️ غير متحقَّق")
+                lbl_st.setProperty("class", "badge-warning")
+            self.table.setCellWidget(row, 5, lbl_st)
+
+    def _on_row_double_clicked(self) -> None:
+        row = self.table.currentRow()
+        if 0 <= row < len(self.nuclides_data):
+            nuc = self.nuclides_data[row]
+            dlg = NuclideDetailCardDialog(nuc, parent=self)
+            _exec_dlg(dlg)
 
 class AddCustomNuclideDialog(QDialog):
     """Dialog for registering a new custom radionuclide."""
@@ -136,7 +340,7 @@ class AddCustomNuclideDialog(QDialog):
         self.edit_hl_val.setPlaceholderText("القيمة الرقمية لعمر النصف (مثال: 432.6)")
         self.combo_hl_unit = QComboBox()
         for u_code, u_info in HALF_LIFE_UNITS.items():
-            self.combo_hl_unit.addItem(f"{u_info['name_ar']} ({u_code})", u_code)
+            self.combo_hl_unit.addItem(isolate_unit_bidi(u_info['name_ar'], u_code), u_code)
         self.combo_hl_unit.setCurrentIndex(self.combo_hl_unit.findData("y"))
 
         hl_row.addWidget(self.edit_hl_val, stretch=2)
@@ -146,6 +350,18 @@ class AddCustomNuclideDialog(QDialog):
         self.edit_reference = QLineEdit()
         self.edit_reference.setPlaceholderText("المصدر المرجعي المعتمد (مثال: DDEP Vol. 5 / NNDC)")
         form.addRow("مصدر القيمة (المرجع) (*):", self.edit_reference)
+
+        self.edit_hl_unc = QLineEdit()
+        self.edit_hl_unc.setPlaceholderText("عدم اليقين في عمر النصف (مثال: 0.09)")
+        form.addRow("عدم اليقين في عمر النصف:", self.edit_hl_unc)
+
+        self.edit_ref_url = QLineEdit()
+        self.edit_ref_url.setPlaceholderText("رابط الملف المرجعي المعتمد (URL اختياري)")
+        form.addRow("رابط الملف المرجعي:", self.edit_ref_url)
+
+        self.edit_ref_acc = QLineEdit()
+        self.edit_ref_acc.setPlaceholderText("تاريخ الاطلاع (YYYY-MM-DD اختياري)")
+        form.addRow("تاريخ الاطلاع على المرجع:", self.edit_ref_acc)
 
         layout.addLayout(form)
 
@@ -180,6 +396,11 @@ class AddCustomNuclideDialog(QDialog):
             self.lbl_error.setText("يرجى إدخال قيمة عددية موجبة وصحيحة لعمر النصف.")
             return
 
+        unc_str = self.edit_hl_unc.text().strip()
+        hl_unc = float(unc_str) if unc_str else None
+        ref_url = self.edit_ref_url.text().strip() or None
+        ref_acc = self.edit_ref_acc.text().strip() or None
+
         try:
             record = self.repo.create_custom_nuclide(
                 code=code,
@@ -189,6 +410,9 @@ class AddCustomNuclideDialog(QDialog):
                 half_life_unit=hl_unit,
                 reference=reference,
                 session=self.session,
+                half_life_uncertainty=hl_unc,
+                reference_url=ref_url,
+                reference_accessed=ref_acc,
             )
             self.created_nuclide_code = record["code"]
             self.accept()
@@ -271,6 +495,12 @@ class AddEditSourceDialog(QDialog):
         self.btn_new_custom_nuclide.setProperty("class", "secondary")
         self.btn_new_custom_nuclide.clicked.connect(self._on_define_custom_nuclide)
         iso_actions.addWidget(self.btn_new_custom_nuclide)
+
+        self.btn_inspect_nuclide = QPushButton("ℹ️ بطاقة النظير والمراجع")
+        self.btn_inspect_nuclide.setProperty("class", "secondary")
+        self.btn_inspect_nuclide.clicked.connect(self._on_inspect_selected_isotope)
+        iso_actions.addWidget(self.btn_inspect_nuclide)
+
         iso_actions.addStretch()
 
         layout_iso.addLayout(iso_actions)
@@ -292,8 +522,10 @@ class AddEditSourceDialog(QDialog):
         iso_hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         iso_hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl_isotopes.verticalHeader().setVisible(False)
-        self.tbl_isotopes.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.tbl_isotopes.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.tbl_isotopes.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tbl_isotopes.setMinimumHeight(140)
+        self.tbl_isotopes.doubleClicked.connect(self._on_inspect_selected_isotope)
         layout_iso.addWidget(self.tbl_isotopes)
 
         layout.addWidget(group_iso)
@@ -325,6 +557,20 @@ class AddEditSourceDialog(QDialog):
 
     def _get_available_nuclides(self) -> List[Dict[str, Any]]:
         return self.nuclide_repo.list_all()
+
+    def _on_inspect_selected_isotope(self) -> None:
+        row = self.tbl_isotopes.currentRow()
+        if row < 0 and self.tbl_isotopes.rowCount() > 0:
+            row = 0
+        if row >= 0:
+            combo: Any = self.tbl_isotopes.cellWidget(row, 0)
+            if combo:
+                nuc_code = combo.currentData()
+                if nuc_code:
+                    nuc_data = self.nuclide_repo.get_by_code(nuc_code)
+                    if nuc_data:
+                        dlg = NuclideDetailCardDialog(nuc_data, parent=self)
+                        _exec_dlg(dlg)
 
     def _add_isotope_row(
         self,
@@ -359,7 +605,7 @@ class AddEditSourceDialog(QDialog):
         # 3. Unit Combo (All 8 units)
         combo_unit = QComboBox()
         for u_code, u_info in ACTIVITY_UNITS.items():
-            combo_unit.addItem(f"{u_info['name_ar']} ({u_code})", u_code)
+            combo_unit.addItem(isolate_unit_bidi(u_info['name_ar'], u_code), u_code)
         idx_u = combo_unit.findData(unit)
         if idx_u >= 0:
             combo_unit.setCurrentIndex(idx_u)
@@ -591,7 +837,7 @@ class SourceDetailDialog(QDialog):
         self.combo_unit = QComboBox()
         self.combo_unit.addItem("تلقائي (Auto)", "auto")
         for u_code, u_info in ACTIVITY_UNITS.items():
-            self.combo_unit.addItem(f"{u_info['name_ar']} ({u_code})", u_code)
+            self.combo_unit.addItem(isolate_unit_bidi(u_info['name_ar'], u_code), u_code)
         self.combo_unit.currentIndexChanged.connect(self._recalc)
         ctrl_row.addWidget(self.combo_unit)
 
@@ -612,6 +858,7 @@ class SourceDetailDialog(QDialog):
         self.tbl_calc.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.tbl_calc.verticalHeader().setVisible(False)
         self.tbl_calc.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.tbl_calc.doubleClicked.connect(self._on_isotope_double_clicked)
         calc_layout.addWidget(self.tbl_calc)
 
         # Hint & Rule scope notice
@@ -627,6 +874,14 @@ class SourceDetailDialog(QDialog):
         btn_close.setProperty("class", "secondary")
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
+
+    def _on_isotope_double_clicked(self) -> None:
+        row = self.tbl_calc.currentRow()
+        isotopes = self.data.get("isotopes") or []
+        if 0 <= row < len(isotopes):
+            iso = isotopes[row]
+            dlg = NuclideDetailCardDialog(iso, parent=self)
+            _exec_dlg(dlg)
 
     def _recalc(self) -> None:
         target_d = self.calc_date_edit.date().toPyDate()
@@ -742,6 +997,11 @@ class SourcesView(QWidget):
         else:
             self.btn_add.setVisible(False)
 
+        self.btn_nuclides = QPushButton("⚛️ دليل النظائر والمراجع")
+        self.btn_nuclides.setProperty("class", "secondary")
+        self.btn_nuclides.clicked.connect(self._on_view_nuclides_reference)
+        header.addWidget(self.btn_nuclides)
+
         self.btn_refresh = QPushButton("🔄 تحديث")
         self.btn_refresh.setProperty("class", "secondary")
         self.btn_refresh.clicked.connect(self.refresh)
@@ -837,6 +1097,10 @@ class SourcesView(QWidget):
 
         action_row.addStretch()
         layout.addLayout(action_row)
+
+    def _on_view_nuclides_reference(self) -> None:
+        dlg = NuclidesReferenceDialog(self.nuclide_repo, parent=self)
+        _exec_dlg(dlg)
 
     def refresh(self) -> None:
         """Fetch records and refresh table and filters."""

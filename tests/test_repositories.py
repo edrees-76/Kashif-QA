@@ -21,6 +21,7 @@ from kashif.core.models import (
     CrystalType,
     DetectorType,
     HPGeDetector,
+    SemiconductorType,
     Instrument,
     InstrumentType,
     NaIDetector,
@@ -86,6 +87,7 @@ def admin_session():
 def test_create_and_get_hpge_detector(db_conn, technician_session):
     repo = DetectorRepository(db_conn)
     hpge = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-01",
         manufacturer="Canberra",
         model="GC2018",
@@ -96,6 +98,10 @@ def test_create_and_get_hpge_detector(db_conn, technician_session):
         preamp_type=PreampType.RESISTIVE,
         nominal_voltage=3000.0,
         voltage_polarity=VoltagePolarity.POSITIVE,
+        certified_polarity=VoltagePolarity.POSITIVE,
+        certificate_ref="CERT-MFR-2024",
+        cooling_hours_cert=8.0,
+        hv_ramp_max_v_per_s=10.0,
         nominal_fwhm_kev=1.85,
         nominal_efficiency_pct=20.0,
         diameter_inch=2.0,
@@ -149,6 +155,7 @@ def test_create_and_get_nai_detector(db_conn, manager_session):
 def test_detector_update(db_conn, technician_session):
     repo = DetectorRepository(db_conn)
     hpge = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-UPD",
         manufacturer="Ortec",
         model="GEM-20",
@@ -159,6 +166,7 @@ def test_detector_update(db_conn, technician_session):
 
     # Update voltage and facility
     updated_hpge = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-UPD",
         manufacturer="Ortec",
         model="GEM-20",
@@ -181,6 +189,7 @@ def test_detector_update(db_conn, technician_session):
 def test_detector_retire(db_conn, manager_session):
     repo = DetectorRepository(db_conn)
     hpge = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-RET",
         manufacturer="Canberra",
         model="GC15",
@@ -206,6 +215,7 @@ def test_detector_retire(db_conn, manager_session):
 def test_detector_unique_constraints(db_conn, technician_session):
     repo = DetectorRepository(db_conn)
     hpge1 = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-UQ1",
         manufacturer="Canberra",
         model="GC20",
@@ -216,6 +226,7 @@ def test_detector_unique_constraints(db_conn, technician_session):
 
     # 1. Duplicate code
     hpge_dup_code = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-UQ1",
         manufacturer="Ortec",
         model="GEM-10",
@@ -228,6 +239,7 @@ def test_detector_unique_constraints(db_conn, technician_session):
 
     # 2. Duplicate (manufacturer, serial_number)
     hpge_dup_mfr_sn = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-UQ2",
         manufacturer="Canberra",
         model="GC25",
@@ -243,6 +255,7 @@ def test_detector_reject_planar_v1(db_conn, technician_session):
     """Ensure PLANAR crystal type is strictly rejected in v1.0 per ADR-0003."""
     with pytest.raises(ValueError) as exc_info:
         HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
             code="HPGE-PLANAR",
             manufacturer="Canberra",
             model="GL2015",
@@ -448,7 +461,8 @@ def test_admin_cannot_write_technical_registries(db_conn, admin_session):
     inst_repo = InstrumentRepository(db_conn)
     src_repo = SourceRepository(db_conn)
 
-    hpge = HPGeDetector(code="H-ADM", manufacturer="Can", model="G", serial_number="SN1", nominal_voltage=1000)
+    hpge = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="H-ADM", manufacturer="Can", model="G", serial_number="SN1", nominal_voltage=1000)
     with pytest.raises(PermissionError):
         det_repo.create(hpge, admin_session)
 
@@ -470,12 +484,14 @@ def test_technician_and_manager_can_manage_registries(db_conn, technician_sessio
     det_repo = DetectorRepository(db_conn)
 
     # Tech creates
-    hpge = HPGeDetector(code="H-TECH", manufacturer="Can", model="G", serial_number="SN-TECH", nominal_voltage=2000)
+    hpge = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="H-TECH", manufacturer="Can", model="G", serial_number="SN-TECH", nominal_voltage=2000)
     d_id = det_repo.create(hpge, technician_session)
     assert d_id > 0
 
     # Manager updates
-    hpge_upd = HPGeDetector(code="H-TECH", manufacturer="Can", model="G-V2", serial_number="SN-TECH", nominal_voltage=2200)
+    hpge_upd = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="H-TECH", manufacturer="Can", model="G-V2", serial_number="SN-TECH", nominal_voltage=2200)
     det_repo.update(d_id, hpge_upd, manager_session)
     assert det_repo.get_by_id(d_id)["model"] == "G-V2"
 
@@ -491,11 +507,13 @@ def test_technician_and_manager_can_manage_registries(db_conn, technician_sessio
 def test_transaction_rollback_preserves_audit_chain(db_conn, technician_session):
     """If a constraint violation occurs, the transaction rolls back cleanly without orphan audit logs."""
     repo = DetectorRepository(db_conn)
-    hpge = HPGeDetector(code="H-ROLL1", manufacturer="Ortec", model="G", serial_number="SN-R1", nominal_voltage=2000)
+    hpge = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="H-ROLL1", manufacturer="Ortec", model="G", serial_number="SN-R1", nominal_voltage=2000)
     repo.create(hpge, technician_session)
 
     # Attempt to insert duplicate code
-    hpge_dup = HPGeDetector(code="H-ROLL1", manufacturer="Ortec", model="G2", serial_number="SN-R2", nominal_voltage=2000)
+    hpge_dup = HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="H-ROLL1", manufacturer="Ortec", model="G2", serial_number="SN-R2", nominal_voltage=2000)
     with pytest.raises(DuplicateEntityError):
         repo.create(hpge_dup, technician_session)
 
@@ -517,7 +535,8 @@ def test_quick_search_across_registries(db_conn, technician_session):
     inst_repo = InstrumentRepository(db_conn)
     src_repo = SourceRepository(db_conn)
 
-    det_repo.create(HPGeDetector(code="HPGE-FIND-ME", manufacturer="Mirion", model="Falcon-5000", serial_number="SN-FIND-DET", nominal_voltage=3000), technician_session)
+    det_repo.create(HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="HPGE-FIND-ME", manufacturer="Mirion", model="Falcon-5000", serial_number="SN-FIND-DET", nominal_voltage=3000), technician_session)
     inst_repo.create(Instrument(instrument_type=InstrumentType.MCA, manufacturer="Canberra", model="Multiport-II", serial_number="SN-FIND-INST", channels_count=8192), technician_session)
     src_repo.create(
         RadioactiveSource(
@@ -879,7 +898,8 @@ def test_repositories_not_found_and_permission_errors(db_conn, technician_sessio
 
     # 1. Non-existent IDs raise EntityNotFoundError
     with pytest.raises(EntityNotFoundError):
-        det_repo.update(99999, HPGeDetector(code="NON", manufacturer="M", model="M", serial_number="S", nominal_voltage=3000), technician_session)
+        det_repo.update(99999, HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="NON", manufacturer="M", model="M", serial_number="S", nominal_voltage=3000), technician_session)
 
     with pytest.raises(EntityNotFoundError):
         det_repo.retire(99999, technician_session)
@@ -904,7 +924,8 @@ def test_repositories_not_found_and_permission_errors(db_conn, technician_sessio
     assert src_repo.get_by_code("NON_EXISTENT") is None
 
     # 3. Admin session cannot retire technical records
-    det_id = det_repo.create(HPGeDetector(code="DET-PERM", manufacturer="M", model="M", serial_number="SN-P1", nominal_voltage=3000), technician_session)
+    det_id = det_repo.create(HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="DET-PERM", manufacturer="M", model="M", serial_number="SN-P1", nominal_voltage=3000), technician_session)
     inst_id = inst_repo.create(Instrument(instrument_type=InstrumentType.MCA, manufacturer="M", model="M", serial_number="SN-P2"), technician_session)
     src_id = src_repo.create(RadioactiveSource(source_code="SRC-PERM", serial_number="SN-P3", isotopes=[SourceIsotope(nuclide_code="Co-60", cert_activity_bq=1000)]), technician_session)
 
@@ -983,16 +1004,20 @@ def test_detector_and_instrument_update_duplicate_rollback(db_conn, manager_sess
     inst_repo = InstrumentRepository(db_conn)
 
     # Detectors duplicate checks
-    d1 = det_repo.create(HPGeDetector(code="DET-ROLL-1", manufacturer="Ortec", model="GEM", serial_number="SN-R1", nominal_voltage=3000), manager_session)
-    d2 = det_repo.create(HPGeDetector(code="DET-ROLL-2", manufacturer="Ortec", model="GEM", serial_number="SN-R2", nominal_voltage=3000), manager_session)
+    d1 = det_repo.create(HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="DET-ROLL-1", manufacturer="Ortec", model="GEM", serial_number="SN-R1", nominal_voltage=3000), manager_session)
+    d2 = det_repo.create(HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="DET-ROLL-2", manufacturer="Ortec", model="GEM", serial_number="SN-R2", nominal_voltage=3000), manager_session)
 
     # Duplicate code
     with pytest.raises(DuplicateEntityError):
-        det_repo.update(d2, HPGeDetector(code="DET-ROLL-1", manufacturer="Ortec", model="GEM", serial_number="SN-R2", nominal_voltage=3000), manager_session)
+        det_repo.update(d2, HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="DET-ROLL-1", manufacturer="Ortec", model="GEM", serial_number="SN-R2", nominal_voltage=3000), manager_session)
 
     # Duplicate manufacturer + serial
     with pytest.raises(DuplicateEntityError):
-        det_repo.update(d2, HPGeDetector(code="DET-ROLL-2", manufacturer="Ortec", model="GEM", serial_number="SN-R1", nominal_voltage=3000), manager_session)
+        det_repo.update(d2, HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="DET-ROLL-2", manufacturer="Ortec", model="GEM", serial_number="SN-R1", nominal_voltage=3000), manager_session)
 
     # Instruments duplicate checks
     i1 = inst_repo.create(Instrument(instrument_type=InstrumentType.AMPLIFIER, manufacturer="Canberra", model="2022", serial_number="SN-IR1"), manager_session)
@@ -1040,7 +1065,7 @@ def test_nuclide_repository_extended_coverage(db_conn, manager_session):
     # 5. List filtering
     confirmed_nuclides = n_repo.list_all(confirmed_only=True)
     assert all(n["confirmed"] == 1 for n in confirmed_nuclides)
-    assert len(confirmed_nuclides) == 2  # Co-60 and Cs-137
+    assert len(confirmed_nuclides) == 3  # Co-60, Cs-137, and Zn-65 (verified via Migration 006)
 
     all_nuclides = n_repo.list_all()
     assert any(n["code"] == "In-111" and n["is_custom"] == 1 for n in all_nuclides)
@@ -1083,3 +1108,77 @@ def test_map_integrity_error_branches():
     assert "خطأ في قيود البيانات" in str(err_other)
 
 
+
+
+def test_detector_repository_rejects_unspecified_semiconductor(db_conn, technician_session):
+    """TASK-1.9: Repository rejects UNSPECIFIED semiconductor type on create and update."""
+    repo = DetectorRepository(db_conn)
+
+    # 1. Reject on create
+    with pytest.raises(ValueError) as exc:
+        repo.create(
+            HPGeDetector(
+                code="HPGE-UNSPEC-1",
+                manufacturer="Canberra",
+                model="GC2018",
+                serial_number="SN-UNSPEC-1",
+                semiconductor_type=SemiconductorType.UNSPECIFIED,
+                nominal_voltage=3000.0,
+            ),
+            technician_session,
+        )
+    assert "P_TYPE" in str(exc.value)
+
+    # 2. Reject on update
+    valid_id = repo.create(
+        HPGeDetector(
+            code="HPGE-VALID-1",
+            manufacturer="Canberra",
+            model="GC2018",
+            serial_number="SN-VALID-1",
+            semiconductor_type=SemiconductorType.P_TYPE,
+            nominal_voltage=3000.0,
+        ),
+        technician_session,
+    )
+
+    with pytest.raises(ValueError) as exc2:
+        repo.update(
+            valid_id,
+            HPGeDetector(
+                code="HPGE-VALID-1",
+                manufacturer="Canberra",
+                model="GC2018",
+                serial_number="SN-VALID-1",
+                semiconductor_type=SemiconductorType.UNSPECIFIED,
+                nominal_voltage=3000.0,
+            ),
+            technician_session,
+        )
+    assert "P_TYPE" in str(exc2.value)
+
+
+def test_nuclide_repository_custom_nuclide_uncertainty_and_url(db_conn, technician_session):
+    """TASK-1.9: NuclideRepository persists uncertainty, reference_url, and reference_accessed."""
+    repo = NuclideRepository(db_conn)
+    rec = repo.create_custom_nuclide(
+        code="Eu-152m",
+        name_ar="يوروبيوم-152م",
+        name_en="Europium-152m",
+        half_life_value=9.31,
+        half_life_unit="h",
+        reference="DDEP Vol. 7",
+        session=technician_session,
+        half_life_uncertainty=0.04,
+        reference_url="http://www.lnhb.fr/nuclides/Eu-152m.pdf",
+        reference_accessed="2026-10-28",
+    )
+    assert rec["code"] == "Eu-152m"
+    assert rec["half_life_uncertainty"] == 0.04
+    assert rec["reference_url"] == "http://www.lnhb.fr/nuclides/Eu-152m.pdf"
+    assert rec["reference_accessed"] == "2026-10-28"
+
+    fetched = repo.get_by_code("Eu-152m")
+    assert fetched is not None
+    assert fetched["half_life_uncertainty"] == 0.04
+    assert fetched["reference_url"] == "http://www.lnhb.fr/nuclides/Eu-152m.pdf"
