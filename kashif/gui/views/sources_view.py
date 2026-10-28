@@ -63,7 +63,13 @@ from kashif.db.repositories import (
     NuclideRepository,
     SourceRepository,
 )
-from kashif.gui.bidi import format_mixed_text, isolate_ltr, isolate_unit_bidi
+from kashif.gui.bidi import (
+    format_mixed_text,
+    format_status_ar,
+    isolate_ltr,
+    isolate_quantity,
+    isolate_unit_bidi,
+)
 from kashif.gui.theme import get_stylesheet
 from kashif.services.session import Session
 
@@ -143,20 +149,21 @@ class NuclideDetailCardDialog(QDialog):
         hl_unit = d.get("half_life_unit")
         hl_days = d.get("half_life_days")
         if hl_val is not None and hl_unit:
-            hl_display = f"{hl_val} {hl_unit} ({hl_days:,.2f} يوم)" if hl_days else f"{hl_val} {hl_unit}"
+            hl_isolated = isolate_quantity(hl_val, hl_unit)
+            hl_display = f"{hl_isolated} ({isolate_quantity(f'{hl_days:,.2f}', 'يوم')})" if hl_days else hl_isolated
         elif hl_days:
-            hl_display = f"{hl_days:,.2f} يوم"
+            hl_display = isolate_quantity(f"{hl_days:,.2f}", "يوم")
         else:
             hl_display = "—"
-        form.addRow("عمر النصف (T½):", QLabel(format_mixed_text(hl_display)))
+        form.addRow("عمر النصف (T½):", QLabel(hl_display))
 
         hl_unc = d.get("half_life_uncertainty")
         if hl_unc is not None:
             unc_unit = hl_unit or "d"
-            unc_display = f"± {hl_unc} {unc_unit}"
+            unc_display = isolate_quantity(f"± {hl_unc}", unc_unit)
         else:
             unc_display = "غير مسجّل"
-        form.addRow("عدم اليقين في عمر النصف:", QLabel(format_mixed_text(unc_display)))
+        form.addRow("عدم اليقين في عمر النصف:", QLabel(unc_display))
 
         form.addRow("المصدر المرجعي المعتمد:", QLabel(format_mixed_text(str(d.get("reference") or "—"))))
 
@@ -279,11 +286,11 @@ class NuclidesReferenceDialog(QDialog):
 
             hl_val = n.get("half_life_value")
             hl_unit = n.get("half_life_unit")
-            hl_str = f"{hl_val} {hl_unit}" if hl_val and hl_unit else f"{n.get('half_life_days', 0):,.2f} d"
+            hl_str = isolate_quantity(hl_val, hl_unit) if hl_val and hl_unit else isolate_quantity(f"{n.get('half_life_days', 0):,.2f}", "d")
             self.table.setItem(row, 2, QTableWidgetItem(hl_str))
 
             unc = n.get("half_life_uncertainty")
-            unc_str = f"± {unc} {hl_unit or ''}" if unc is not None else "—"
+            unc_str = isolate_quantity(f"± {unc}", hl_unit or "") if unc is not None else "—"
             self.table.setItem(row, 3, QTableWidgetItem(unc_str))
 
             ref_str = n.get("reference") or "—"
@@ -544,6 +551,7 @@ class AddEditSourceDialog(QDialog):
         iso_hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         iso_hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl_isotopes.verticalHeader().setVisible(False)
+        self.tbl_isotopes.verticalHeader().setDefaultSectionSize(36)
         self.tbl_isotopes.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.tbl_isotopes.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tbl_isotopes.setMinimumHeight(140)
@@ -648,8 +656,11 @@ class AddEditSourceDialog(QDialog):
         self.tbl_isotopes.setCellWidget(row_idx, 3, date_edit)
 
         # 5. Delete Row Button
+        self.tbl_isotopes.setRowHeight(row_idx, 36)
         btn_delete = QPushButton("🗑️ حذف")
         btn_delete.setProperty("class", "danger")
+        btn_delete.setFixedHeight(30)
+        btn_delete.setStyleSheet("margin: 3px 4px; padding: 2px 8px; border-radius: 4px;")
         btn_delete.clicked.connect(lambda: self._remove_isotope_row(btn_delete))
         self.tbl_isotopes.setCellWidget(row_idx, 4, btn_delete)
 
@@ -849,7 +860,7 @@ class SourceDetailDialog(QDialog):
         form_meta.addRow("الرقم التسلسلي:", QLabel(format_mixed_text(str(d.get("serial_number") or "—"))))
         form_meta.addRow("رقم شهادة المعايرة:", QLabel(format_mixed_text(str(d.get("certificate_number") or "—"))))
         form_meta.addRow("المنشأة / المعمل:", QLabel(format_mixed_text(str(d.get("facility_name") or "—"))))
-        form_meta.addRow("الحالة:", QLabel(format_mixed_text(str(d.get("status") or "—"))))
+        form_meta.addRow("الحالة:", QLabel(format_status_ar(d.get("status"))))
         if d.get("notes"):
             form_meta.addRow("ملاحظات:", QLabel(format_mixed_text(str(d.get("notes")))))
 
@@ -901,7 +912,12 @@ class SourceDetailDialog(QDialog):
         calc_layout.addWidget(self.tbl_calc)
 
         # Hint & Rule scope notice
-        lbl_hint = QLabel("قاعدة R-SRC-01 (الفعالية 37 kBq ± 50%) مخصصة فقط لنظيري Co-60 و Cs-137 وفق معايير الدليل الإرشادي.")
+        hint_text = (
+            f"قاعدة {isolate_ltr('R-SRC-01')} "
+            f"(الفعالية {isolate_ltr('37 kBq ± 50%')}) "
+            f"مخصصة فقط لنظيري {isolate_ltr('Co-60')} و {isolate_ltr('Cs-137')} وفق معايير الدليل الإرشادي."
+        )
+        lbl_hint = QLabel(hint_text)
         lbl_hint.setProperty("class", "hint")
         calc_layout.addWidget(lbl_hint)
 
@@ -935,26 +951,27 @@ class SourceDetailDialog(QDialog):
         for row, iso in enumerate(isotopes):
             nuc = iso.get("nuclide_code", "—")
             nuc_name = iso.get("name_ar") or ""
-            nuc_display = f"{nuc} ({nuc_name})" if nuc_name else nuc
+            nuc_iso = isolate_ltr(nuc)
+            nuc_display = f"{nuc_iso} ({nuc_name})" if nuc_name else nuc_iso
 
             # Half-life formatting in original unit
             hl_days = iso.get("half_life_days") or 0.0
             hl_val = iso.get("half_life_value")
             hl_unit = iso.get("half_life_unit")
             if hl_val is not None and hl_unit:
-                hl_str = format_half_life(hl_val, hl_unit)
+                hl_str = isolate_quantity(format_half_life(hl_val, hl_unit))
             else:
-                hl_str = format_half_life(hl_days, "d")
+                hl_str = isolate_quantity(format_half_life(hl_days, "d"))
 
             cert_bq = iso.get("cert_activity_bq", 0.0)
             cert_d_str = iso.get("cert_date", "")
 
             # Formatted cert activity
             if unit_choice == "auto":
-                cert_act_str = format_activity_auto(cert_bq)
+                cert_act_str = isolate_quantity(format_activity_auto(cert_bq))
             else:
                 c_val = convert_activity_from_bq(cert_bq, unit_choice)
-                cert_act_str = f"{c_val:,.3g} {unit_choice}"
+                cert_act_str = isolate_quantity(f"{c_val:,.3g} {unit_choice}")
 
             self.tbl_calc.setItem(row, 0, QTableWidgetItem(nuc_display))
             self.tbl_calc.setItem(row, 1, QTableWidgetItem(hl_str))
@@ -971,10 +988,10 @@ class SourceDetailDialog(QDialog):
                 if elapsed_days >= 0:
                     current_bq = decay_activity(cert_bq, float(elapsed_days), hl_days)
                     if unit_choice == "auto":
-                        act_now_str = format_activity_auto(current_bq)
+                        act_now_str = isolate_quantity(format_activity_auto(current_bq))
                     else:
                         now_val = convert_activity_from_bq(current_bq, unit_choice)
-                        act_now_str = f"{now_val:,.3g} {unit_choice}"
+                        act_now_str = isolate_quantity(f"{now_val:,.3g} {unit_choice}")
 
                     # R-SRC-01 evaluation (Only Co-60 and Cs-137)
                     if nuc in ("Co-60", "Cs-137"):
@@ -1197,20 +1214,20 @@ class SourcesView(QWidget):
             self.table.setItem(row, 0, QTableWidgetItem(str(rec["id"])))
 
             isotopes = rec.get("isotopes", [])
-            nuclides_str = " + ".join(iso["nuclide_code"] for iso in isotopes) if isotopes else rec.get("nuclide", "—")
+            nuclides_str = " + ".join(isolate_ltr(iso["nuclide_code"]) for iso in isotopes) if isotopes else isolate_ltr(rec.get("nuclide", "—"))
             self.table.setItem(row, 1, QTableWidgetItem(nuclides_str))
             self.table.setItem(row, 2, QTableWidgetItem(rec["source_code"]))
             self.table.setItem(row, 3, QTableWidgetItem(rec["serial_number"]))
 
             # Certified activity summary
             if len(isotopes) == 1:
-                cert_act_str = format_activity_auto(isotopes[0]["cert_activity_bq"])
+                cert_act_str = isolate_quantity(format_activity_auto(isotopes[0]["cert_activity_bq"]))
                 cert_date_str = isotopes[0]["cert_date"]
             elif len(isotopes) > 1:
-                cert_act_str = " + ".join(format_activity_auto(iso["cert_activity_bq"]) for iso in isotopes)
+                cert_act_str = " + ".join(isolate_quantity(format_activity_auto(iso["cert_activity_bq"])) for iso in isotopes)
                 cert_date_str = isotopes[0]["cert_date"]
             else:
-                cert_act_str = format_activity_auto(rec.get("cert_activity_bq") or 0.0)
+                cert_act_str = isolate_quantity(format_activity_auto(rec.get("cert_activity_bq") or 0.0))
                 cert_date_str = rec.get("cert_date") or "—"
 
             self.table.setItem(row, 4, QTableWidgetItem(cert_act_str))
@@ -1232,7 +1249,7 @@ class SourcesView(QWidget):
                     elapsed = (target_date - c_date).days
                     if elapsed >= 0:
                         cur_bq = decay_activity(c_bq, float(elapsed), hl_days)
-                        decay_acts.append(format_activity_auto(cur_bq))
+                        decay_acts.append(isolate_quantity(format_activity_auto(cur_bq)))
 
                         if n_code in ("Co-60", "Cs-137"):
                             has_co60_or_cs137 = True
