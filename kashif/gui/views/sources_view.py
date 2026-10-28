@@ -33,11 +33,17 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+)
+from kashif.gui.dialog_utils import (
+    enable_dialog_window_controls,
+    adjust_dialog_size_to_screen,
+    attach_calendar_popup_filter,
 )
 
 from kashif.core.decay import (
@@ -111,7 +117,9 @@ class NuclideDetailCardDialog(QDialog):
         self.setMinimumWidth(480)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
         self._init_ui()
+        adjust_dialog_size_to_screen(self, preferred_width=500, preferred_height=600)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -195,8 +203,10 @@ class NuclidesReferenceDialog(QDialog):
         self.setMinimumHeight(480)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
         self._init_ui()
         self._load_data()
+        adjust_dialog_size_to_screen(self, preferred_width=850, preferred_height=650)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -312,8 +322,10 @@ class AddCustomNuclideDialog(QDialog):
         self.setMinimumWidth(460)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
 
         self._init_ui()
+        adjust_dialog_size_to_screen(self, preferred_width=500, preferred_height=600)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -443,20 +455,30 @@ class AddEditSourceDialog(QDialog):
         title = "تعديل مصدر مشع" if source_id else "إضافة مصدر مشع جديد — منظومة كاشف"
         self.setWindowTitle(title)
         self.setMinimumWidth(800)
-        self.setMinimumHeight(600)
-        self.resize(800, 600)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
 
         self._init_ui()
         if self.source_id:
             self._load_existing_data()
         else:
             self._add_isotope_row(nuclide_code="Co-60", act_val=37000.0, unit="Bq")
+        adjust_dialog_size_to_screen(self, preferred_width=820, preferred_height=650)
 
     def _init_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 18, 22, 18)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 16, 20, 16)
+        root_layout.setSpacing(12)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setContentsMargins(0, 0, 8, 0)
         layout.setSpacing(14)
 
         # 1. Physical Source Info
@@ -536,14 +558,18 @@ class AddEditSourceDialog(QDialog):
         self.edit_notes.setPlaceholderText("ملاحظات فنية أو شروط التخزين والسلامة الإشعاعية...")
         layout.addWidget(QLabel("ملاحظات:"))
         layout.addWidget(self.edit_notes)
+        layout.addStretch()
 
-        # Error label
+        self.scroll_area.setWidget(scroll_content)
+        root_layout.addWidget(self.scroll_area, 1)
+
+        # Error label (fixed outside scroll area)
         self.lbl_error = QLabel()
         self.lbl_error.setProperty("class", "error-text")
         self.lbl_error.setWordWrap(True)
-        layout.addWidget(self.lbl_error)
+        root_layout.addWidget(self.lbl_error)
 
-        # Action Buttons
+        # Action Buttons (fixed outside scroll area)
         btn_row = QHBoxLayout()
         self.btn_save = QPushButton("حفظ المصدر المشع")
         self.btn_save.clicked.connect(self._on_save)
@@ -553,7 +579,7 @@ class AddEditSourceDialog(QDialog):
 
         btn_row.addWidget(self.btn_save)
         btn_row.addWidget(self.btn_cancel)
-        layout.addLayout(btn_row)
+        root_layout.addLayout(btn_row)
 
     def _get_available_nuclides(self) -> List[Dict[str, Any]]:
         return self.nuclide_repo.list_all()
@@ -617,7 +643,8 @@ class AddEditSourceDialog(QDialog):
         if cert_date_val:
             date_edit.setDate(QDate(cert_date_val.year, cert_date_val.month, cert_date_val.day))
         else:
-            date_edit.setDate(QDate.currentDate().addYears(-1))
+            date_edit.setDate(QDate.currentDate())
+        attach_calendar_popup_filter(date_edit)
         self.tbl_isotopes.setCellWidget(row_idx, 3, date_edit)
 
         # 5. Delete Row Button
@@ -791,12 +818,24 @@ class SourceDetailDialog(QDialog):
         self.setMinimumWidth(720)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
 
         self._init_ui()
+        adjust_dialog_size_to_screen(self, preferred_width=750, preferred_height=650)
 
     def _init_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 16, 20, 16)
+        root_layout.setSpacing(12)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setContentsMargins(0, 0, 8, 0)
         layout.setSpacing(12)
 
         # 1. Source Metadata Card
@@ -870,10 +909,13 @@ class SourceDetailDialog(QDialog):
 
         self._recalc()
 
+        self.scroll_area.setWidget(scroll_content)
+        root_layout.addWidget(self.scroll_area, 1)
+
         btn_close = QPushButton("إغلاق")
         btn_close.setProperty("class", "secondary")
         btn_close.clicked.connect(self.accept)
-        layout.addWidget(btn_close)
+        root_layout.addWidget(btn_close)
 
     def _on_isotope_double_clicked(self) -> None:
         row = self.tbl_calc.currentRow()

@@ -25,6 +25,10 @@ from PyQt6.QtWidgets import (
 )
 
 from kashif.gui.bidi import format_mixed_text
+from kashif.gui.dialog_utils import (
+    enable_dialog_window_controls,
+    adjust_dialog_size_to_screen,
+)
 from kashif.gui.theme import COLORS, get_stylesheet, status_color
 from kashif.services.security import (
     MIN_PASSWORD_LENGTH,
@@ -46,7 +50,9 @@ class CreateUserDialog(QDialog):
         self.setMinimumWidth(420)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
         self._init_ui()
+        adjust_dialog_size_to_screen(self, preferred_width=450, preferred_height=320)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -116,7 +122,9 @@ class ResetPasswordAdminDialog(QDialog):
         self.setMinimumWidth(380)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
         self._init_ui()
+        adjust_dialog_size_to_screen(self, preferred_width=400, preferred_height=250)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -174,11 +182,12 @@ class UsersManagementDialog(QDialog):
         self.session = session
 
         self.setWindowTitle("إدارة المستخدمين والصلاحيات — KASHIF-QA")
-        self.resize(850, 520)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
 
         self._init_ui()
+        adjust_dialog_size_to_screen(self, preferred_width=850, preferred_height=520)
         self.refresh_users()
 
     def _init_ui(self) -> None:

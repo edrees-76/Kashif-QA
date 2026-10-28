@@ -51,6 +51,10 @@ from kashif.db.repositories import (
     quick_search,
 )
 from kashif.gui.bidi import format_mixed_text
+from kashif.gui.dialog_utils import (
+    enable_dialog_window_controls,
+    adjust_dialog_size_to_screen,
+)
 from kashif.gui.idle_lock import IdleLock
 from kashif.gui.navigation import SidebarNavigation
 from kashif.gui.theme import COLORS, get_stylesheet, logo_file, set_mode
@@ -82,10 +86,11 @@ class QuickSearchResultsDialog(QDialog):
         self.results = results
         self.conn = conn
         self.setWindowTitle(f"نتائج البحث السريع ({len(results)} نتائج)")
-        self.resize(650, 360)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
         self._init_ui()
+        adjust_dialog_size_to_screen(self, preferred_width=650, preferred_height=360)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)

@@ -32,11 +32,16 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+)
+from kashif.gui.dialog_utils import (
+    enable_dialog_window_controls,
+    adjust_dialog_size_to_screen,
 )
 
 from kashif.core.models import Instrument, InstrumentType
@@ -112,14 +117,26 @@ class AddEditInstrumentDialog(QDialog):
         self.setMinimumWidth(540)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
 
         self._init_ui()
         if self.instrument_id:
             self._load_existing_data()
+        adjust_dialog_size_to_screen(self, preferred_width=580, preferred_height=700)
 
     def _init_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 16, 20, 16)
+        root_layout.setSpacing(12)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setContentsMargins(0, 0, 8, 0)
         layout.setSpacing(14)
 
         # 1. Basic Info
@@ -206,14 +223,18 @@ class AddEditInstrumentDialog(QDialog):
         self.edit_notes.setPlaceholderText("ملاحظات إضافية...")
         layout.addWidget(QLabel("ملاحظات:"))
         layout.addWidget(self.edit_notes)
+        layout.addStretch()
 
-        # Error text
+        self.scroll_area.setWidget(scroll_content)
+        root_layout.addWidget(self.scroll_area, 1)
+
+        # Error text (fixed outside scroll area)
         self.lbl_error = QLabel()
         self.lbl_error.setProperty("class", "error-text")
         self.lbl_error.setWordWrap(True)
-        layout.addWidget(self.lbl_error)
+        root_layout.addWidget(self.lbl_error)
 
-        # Action Buttons
+        # Action Buttons (fixed outside scroll area)
         btn_row = QHBoxLayout()
         self.btn_save = QPushButton("حفظ الجهاز")
         self.btn_save.clicked.connect(self._on_save)
@@ -224,7 +245,7 @@ class AddEditInstrumentDialog(QDialog):
 
         btn_row.addWidget(self.btn_save)
         btn_row.addWidget(self.btn_cancel)
-        layout.addLayout(btn_row)
+        root_layout.addLayout(btn_row)
 
     def _on_cal_toggled(self, checked: bool) -> None:
         self.date_cal.setEnabled(checked)
@@ -346,12 +367,19 @@ class InstrumentDetailDialog(QDialog):
         self.setMinimumWidth(500)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
         self._init_ui()
+        adjust_dialog_size_to_screen(self, preferred_width=520, preferred_height=600)
 
     def _init_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(14)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 16, 20, 16)
+        root_layout.setSpacing(12)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         card = QFrame()
         card.setProperty("class", "card")
@@ -416,12 +444,13 @@ class InstrumentDetailDialog(QDialog):
         if d.get("notes"):
             form.addRow("ملاحظات:", QLabel(format_mixed_text(str(d.get("notes")))))
 
-        layout.addWidget(card)
+        self.scroll_area.setWidget(card)
+        root_layout.addWidget(self.scroll_area, 1)
 
         btn_close = QPushButton("إغلاق")
         btn_close.setProperty("class", "secondary")
         btn_close.clicked.connect(self.accept)
-        layout.addWidget(btn_close)
+        root_layout.addWidget(btn_close)
 
 
 class InstrumentsView(QWidget):
