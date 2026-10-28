@@ -51,7 +51,12 @@ from kashif.db.repositories import (
     EntityNotFoundError,
     InstrumentRepository,
 )
-from kashif.gui.bidi import format_mixed_text
+from kashif.gui.bidi import (
+    format_mixed_text,
+    format_status_ar,
+    isolate_ltr,
+    isolate_quantity,
+)
 from kashif.gui.theme import get_stylesheet
 from kashif.services.session import Session
 
@@ -393,6 +398,8 @@ class InstrumentDetailDialog(QDialog):
         form.addRow("الرقم التسلسلي:", QLabel(format_mixed_text(str(d.get("serial_number") or "—"))))
         form.addRow("المنشأة / المعمل:", QLabel(format_mixed_text(str(d.get("facility_name") or "—"))))
         form.addRow("حالة الخدمة:", QLabel("في الخدمة المعملية" if d.get("is_in_service") else "خارج الخدمة"))
+        if d.get("status"):
+            form.addRow("الحالة:", QLabel(format_status_ar(d.get("status"))))
 
         # Calibration evaluation via R-INST-01
         cal_exp = d.get("cal_expiry")
@@ -433,13 +440,14 @@ class InstrumentDetailDialog(QDialog):
             form.addRow("حالة المعايرة:", QLabel("غير محدد"))
 
         if d.get("ripple_mv") is not None:
-            form.addRow("تموج الجهد (Ripple):", QLabel(format_mixed_text(f"{d.get('ripple_mv')} mV")))
+            form.addRow("تموج الجهد (Ripple):", QLabel(isolate_quantity(d.get("ripple_mv"), "mV")))
         if d.get("regulation_pct") is not None:
-            form.addRow("تنظيم الجهد (Regulation):", QLabel(format_mixed_text(f"{d.get('regulation_pct')} %")))
+            form.addRow("تنظيم الجهد (Regulation):", QLabel(isolate_quantity(d.get("regulation_pct"), "%")))
         if d.get("channels_count") is not None:
-            form.addRow("عدد قنوات MCA:", QLabel(format_mixed_text(f"{d.get('channels_count')} قنوات")))
+            form.addRow("عدد قنوات MCA:", QLabel(isolate_quantity(d.get("channels_count"), "قناة")))
         if d.get("shaping_range_min_us") is not None and d.get("shaping_range_max_us") is not None:
-            form.addRow("نطاق زمن التشكيل:", QLabel(format_mixed_text(f"{d.get('shaping_range_min_us')} – {d.get('shaping_range_max_us')} µs")))
+            range_str = f"{d.get('shaping_range_min_us')} – {d.get('shaping_range_max_us')}"
+            form.addRow("نطاق زمن التشكيل:", QLabel(isolate_quantity(range_str, "µs")))
 
         if d.get("notes"):
             form.addRow("ملاحظات:", QLabel(format_mixed_text(str(d.get("notes")))))
@@ -626,7 +634,7 @@ class InstrumentsView(QWidget):
             self.table.setCellWidget(row, 6, badge_widget)
             self.table.setItem(row, 7, QTableWidgetItem(rec["facility_name"] or "—"))
 
-            status_str = "نشط" if rec["status"] == "ACTIVE" else ("متقاعد" if rec["status"] == "RETIRED" else rec["status"])
+            status_str = format_status_ar(rec.get("status"))
             self.table.setItem(row, 8, QTableWidgetItem(status_str))
 
     def _get_selected_instrument_id(self) -> Optional[int]:

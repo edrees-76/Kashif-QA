@@ -2,7 +2,7 @@
 
 from typing import Optional
 from PyQt6.QtCore import Qt, QPoint, QObject, QEvent, QTimer, QRect
-from PyQt6.QtWidgets import QDialog, QDateEdit, QApplication
+from PyQt6.QtWidgets import QDialog, QDateEdit, QApplication, QScrollArea, QFrame, QPushButton
 
 
 def enable_dialog_window_controls(
@@ -29,13 +29,43 @@ def enable_dialog_window_controls(
     dialog.setWindowFlags(flags)
 
 
+def constrain_dialog_content_width(dialog: QDialog, max_content_width: int = 1000) -> None:
+    """Constrain dialog content/form width and center it so fields do not stretch excessively on large screens.
+    
+    Ensures that when a dialog is maximized on wide displays (e.g. 1920px), the form remains
+    at a readable width (around 1000px) and neatly centered horizontally.
+    """
+    scroll_areas = dialog.findChildren(QScrollArea)
+    if scroll_areas:
+        for sa in scroll_areas:
+            sa.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            widget = sa.widget()
+            if widget:
+                widget.setMaximumWidth(max_content_width)
+    else:
+        for frame in dialog.findChildren(QFrame):
+            if frame.parent() == dialog:
+                frame.setMaximumWidth(max_content_width)
+                if dialog.layout():
+                    dialog.layout().setAlignment(frame, Qt.AlignmentFlag.AlignHCenter)
+
+    for btn in dialog.findChildren(QPushButton):
+        if btn.parent() == dialog and dialog.layout():
+            btn.setMaximumWidth(max_content_width)
+            dialog.layout().setAlignment(btn, Qt.AlignmentFlag.AlignHCenter)
+
+
 def adjust_dialog_size_to_screen(
     dialog: QDialog,
     max_ratio: float = 0.90,
     preferred_width: Optional[int] = None,
     preferred_height: Optional[int] = None,
+    max_content_width: int = 1000,
 ) -> None:
-    """Adjust dialog size so it never exceeds max_ratio of the available screen geometry."""
+    """Adjust dialog size so it never exceeds max_ratio of the available screen geometry,
+    and constrain inner content/form width so fields do not stretch across wide screens."""
+    constrain_dialog_content_width(dialog, max_content_width=max_content_width)
+
     screen = QApplication.primaryScreen()
     if not screen:
         if preferred_width and preferred_height:
@@ -109,4 +139,3 @@ def attach_calendar_popup_filter(date_edit: QDateEdit) -> None:
         popup.installEventFilter(filter_obj)
         # Keep a reference to prevent garbage collection
         setattr(date_edit, "_calendar_popup_filter", filter_obj)
-

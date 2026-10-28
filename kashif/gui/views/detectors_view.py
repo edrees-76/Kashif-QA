@@ -55,7 +55,12 @@ from kashif.db.repositories import (
     DuplicateEntityError,
     EntityNotFoundError,
 )
-from kashif.gui.bidi import format_mixed_text, isolate_ltr
+from kashif.gui.bidi import (
+    format_mixed_text,
+    format_status_ar,
+    isolate_ltr,
+    isolate_quantity,
+)
 from kashif.gui.theme import get_stylesheet
 from kashif.services.session import Session
 
@@ -532,9 +537,14 @@ class DetectorDetailDialog(QDialog):
         form.addRow("الشركة الصانعة:", QLabel(format_mixed_text(str(d.get("manufacturer") or "—"))))
         form.addRow("الطراز:", QLabel(format_mixed_text(str(d.get("model") or "—"))))
         form.addRow("الرقم التسلسلي:", QLabel(format_mixed_text(str(d.get("serial_number") or "—"))))
-        form.addRow("جهد التشغيل:", QLabel(format_mixed_text(f"{d.get('nominal_voltage')} V ({d.get('voltage_polarity') or '—'})")))
+        pol_raw = d.get('voltage_polarity')
+        pol_map = {"POSITIVE": "موجبة (+)", "NEGATIVE": "سالبة (-)"}
+        pol_str = pol_map.get(str(pol_raw).upper(), str(pol_raw) if pol_raw else "—")
+        v_val = d.get('nominal_voltage')
+        v_str = isolate_quantity(v_val, 'V') if v_val is not None else "—"
+        form.addRow("جهد التشغيل:", QLabel(f"{v_str} ({pol_str})"))
         form.addRow("المنشأة / المعمل:", QLabel(format_mixed_text(str(d.get("facility_name") or "—"))))
-        form.addRow("الحالة التشغيلية:", QLabel(format_mixed_text(str(d.get("status") or "—"))))
+        form.addRow("الحالة التشغيلية:", QLabel(format_status_ar(d.get("status"))))
 
         if d.get("detector_type") == "HPGE":
             sem = d.get("semiconductor_type")
@@ -556,15 +566,23 @@ class DetectorDetailDialog(QDialog):
 
             ramp = d.get("hv_ramp_max_v_per_s") if d.get("hv_ramp_max_v_per_s") is not None else 10.0
             ramp_ref = d.get("hv_ramp_reference") or "دليل عام"
-            form.addRow("أقصى معدل رفع جهد:", QLabel(format_mixed_text(f"{ramp} V/s (مرجع: {ramp_ref})")))
+            ramp_str = isolate_quantity(ramp, "V/s")
+            form.addRow("أقصى معدل رفع جهد:", QLabel(f"{ramp_str} (مرجع: {ramp_ref})"))
 
             form.addRow("المضخم الأولي:", QLabel(format_mixed_text(str(d.get("preamp_type") or "—"))))
-            form.addRow("نافذة البريليوم:", QLabel(format_mixed_text(f"{d.get('window_type')} ({d.get('beryllium_window_status')})")))
-            form.addRow("FWHM الاسمي:", QLabel(format_mixed_text(f"{d.get('nominal_fwhm_kev') or '—'} keV")))
-            form.addRow("الكفاءة الاسمية:", QLabel(format_mixed_text(f"{d.get('nominal_efficiency_pct') or '—'} %")))
+            win_st = format_status_ar(d.get("beryllium_window_status"))
+            form.addRow("نافذة البريليوم:", QLabel(f"{d.get('window_type') or '—'} ({win_st})"))
+            fwhm_val = d.get("nominal_fwhm_kev")
+            fwhm_str = isolate_quantity(fwhm_val, "keV") if fwhm_val is not None else "—"
+            form.addRow("FWHM الاسمي:", QLabel(fwhm_str))
+            eff_val = d.get("nominal_efficiency_pct")
+            eff_str = isolate_quantity(eff_val, "%") if eff_val is not None else "—"
+            form.addRow("الكفاءة الاسمية:", QLabel(eff_str))
         else:
             form.addRow("أبعاد البلورة:", QLabel(format_mixed_text(f"{d.get('diameter_inch')}\" × {d.get('height_inch')}\"")))
-            form.addRow("الدقة الاسمية (%R):", QLabel(format_mixed_text(f"{d.get('nominal_resolution_pct') or '—'} %")))
+            res_val = d.get("nominal_resolution_pct")
+            res_str = isolate_quantity(res_val, "%") if res_val is not None else "—"
+            form.addRow("الدقة الاسمية (%R):", QLabel(res_str))
 
         if d.get("notes"):
             form.addRow("ملاحظات:", QLabel(format_mixed_text(str(d.get("notes")))))
@@ -727,7 +745,7 @@ class DetectorsView(QWidget):
             self.table.setItem(row, 5, QTableWidgetItem(rec["serial_number"]))
             self.table.setItem(row, 6, QTableWidgetItem(rec["facility_name"] or "—"))
 
-            status_str = "نشط" if rec["status"] == "ACTIVE" else ("متقاعد" if rec["status"] == "RETIRED" else rec["status"])
+            status_str = format_status_ar(rec.get("status"))
             self.table.setItem(row, 7, QTableWidgetItem(status_str))
 
     def _get_selected_detector_id(self) -> Optional[int]:
