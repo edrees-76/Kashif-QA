@@ -403,6 +403,67 @@ def migration_006_nuclides_uncertainty_and_zn65_ddep(conn: sqlite3.Connection) -
     cursor.close()
 
 
+
+
+def migration_007_lnhb_half_lives(conn: sqlite3.Connection) -> None:
+    """Migration 007: Update 9 standard gamma radionuclides with verified LNHB/DDEP half-lives.
+
+    Source: Official LNHB/DDEP (Laboratoire National Henri Becquerel / Decay Data Evaluation Project)
+    Table de Radionucléides, verified by Project Manager on 2026-10-28.
+    Unit 'a' (annum/year) in LNHB tables corresponds to standard year 'y' (1 y = 365.25 d).
+
+    Radionuclides updated (where is_custom = 0):
+    - Am-241: 432.6 (6) y, uncertainty = 0.6 y, https://www.lnhb.fr/nuclides/Am-241_tables.pdf
+    - Ba-133: 10.539 (6) y, uncertainty = 0.006 y, https://www.lnhb.fr/nuclides/Ba-133_tables.pdf
+    - Cd-109: 461.9 (4) d, uncertainty = 0.4 d, https://www.lnhb.fr/nuclides/Cd-109_tables.pdf
+    - Co-57:  271.81 (4) d, uncertainty = 0.04 d, https://www.lnhb.fr/nuclides/Co-57_tables.pdf
+    - Eu-152: 13.522 (16) y, uncertainty = 0.016 y, https://www.lnhb.fr/nuclides/Eu-152_tables.pdf
+    - Mn-54:  312.19 (3) d, uncertainty = 0.03 d, https://www.lnhb.fr/nuclides/Mn-54_tables.pdf
+    - Na-22:  2.6029 (8) y, uncertainty = 0.0008 y, https://www.lnhb.fr/nuclides/Na-22_tables.pdf
+    - Y-88:   106.63 (5) d, uncertainty = 0.05 d, https://www.lnhb.fr/nuclides/Y-88_tables.pdf
+    - Ra-226: 1600 (7) y, uncertainty = 7.0 y, https://www.lnhb.fr/nuclides/Ra-226_tables.pdf
+
+    Unchanged:
+    - Co-60, Cs-137, Zn-65
+    - Custom nuclides (is_custom = 1)
+    - Any source activity records
+    """
+    cursor = conn.cursor()
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    lnhb_updates = [
+        # code, value, unit, uncertainty, url
+        ("Am-241", 432.6, "y", 0.6, "https://www.lnhb.fr/nuclides/Am-241_tables.pdf"),
+        ("Ba-133", 10.539, "y", 0.006, "https://www.lnhb.fr/nuclides/Ba-133_tables.pdf"),
+        ("Cd-109", 461.9, "d", 0.4, "https://www.lnhb.fr/nuclides/Cd-109_tables.pdf"),
+        ("Co-57", 271.81, "d", 0.04, "https://www.lnhb.fr/nuclides/Co-57_tables.pdf"),
+        ("Eu-152", 13.522, "y", 0.016, "https://www.lnhb.fr/nuclides/Eu-152_tables.pdf"),
+        ("Mn-54", 312.19, "d", 0.03, "https://www.lnhb.fr/nuclides/Mn-54_tables.pdf"),
+        ("Na-22", 2.6029, "y", 0.0008, "https://www.lnhb.fr/nuclides/Na-22_tables.pdf"),
+        ("Y-88", 106.63, "d", 0.05, "https://www.lnhb.fr/nuclides/Y-88_tables.pdf"),
+        ("Ra-226", 1600.0, "y", 7.0, "https://www.lnhb.fr/nuclides/Ra-226_tables.pdf"),
+    ]
+
+    for code, val, unit, uncert, url in lnhb_updates:
+        hl_days = half_life_to_days(val, unit)
+        ref_text = f"LNHB/DDEP - Table de Radionucléides ({code})"
+        cursor.execute("""
+        UPDATE nuclides
+        SET half_life_value = ?,
+            half_life_unit = ?,
+            half_life_days = ?,
+            half_life_uncertainty = ?,
+            reference = ?,
+            reference_url = ?,
+            reference_accessed = '2026-10-28',
+            confirmed = 1,
+            updated_at = ?
+        WHERE code = ? AND is_custom = 0;
+        """, (val, unit, hl_days, uncert, ref_text, url, now_str, code))
+
+    cursor.close()
+
+
 # Registry of migrations: version -> (description, migration_function)
 MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     1: ("Initial schema: users, audit_log with hash-chaining triggers, system_settings", migration_001_initial_core_security),
@@ -411,6 +472,7 @@ MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     4: ("Nuclides reference registry and multi-isotope radioactive source architecture", migration_004_multi_isotope_sources),
     5: ("HPGe crystal semiconductor type (P/N), certified polarity, ramp limits, and NaI specs", migration_005_hpge_pn_and_detector_specs),
     6: ("Nuclide uncertainties, DDEP references, and Zn-65 verified half-life correction", migration_006_nuclides_uncertainty_and_zn65_ddep),
+    7: ("Update verified LNHB/DDEP half-lives and uncertainties for 9 standard gamma radionuclides", migration_007_lnhb_half_lives),
 }
 
 

@@ -298,7 +298,7 @@ def test_half_life_units_conversion_and_formatting():
     assert "ساعة" in format_half_life(6.01, "h")
     assert "دقيقة" in format_half_life(109.7, "m")
     assert "ثانية" in format_half_life(30.0, "s")
-    assert "يوم" in format_half_life(271.74, "d")
+    assert "يوم" in format_half_life(271.81, "d")
 
     # Scientific notation for very large/small
     sci_large = format_half_life(1.5e5, "y")
@@ -326,4 +326,46 @@ def test_half_life_units_conversion_and_formatting():
         format_half_life(float("nan"), "y")
     with pytest.raises(ValueError):
         format_half_life(10.0, "unknown")
+
+def test_co57_decay_uses_verified_lnhb_half_life():
+    """TASK-1.10: Co-57 source decay calculation strictly uses verified LNHB half-life 271.81 d."""
+    import sqlite3
+    from kashif.db.migrations import apply_migrations
+    from kashif.db.repositories import NuclideRepository
+
+    # 1. Decay calculation physics check with 271.81 d
+    # Initial activity A0 = 74,000.0 Bq (2 uCi)
+    a0 = 74000.0
+    hl_co57 = 271.81
+
+    # Exactly 1 half-life elapsed: A(t) = A0 / 2 = 37,000.0 Bq
+    a_1hl = decay_activity(activity_0=a0, elapsed_days=271.81, half_life_days=hl_co57)
+    assert math.isclose(a_1hl, 37000.0, rel_tol=1e-9)
+
+    # Exactly 2 half-lives elapsed: A(t) = A0 / 4 = 18,500.0 Bq
+    a_2hl = decay_activity(activity_0=a0, elapsed_days=543.62, half_life_days=hl_co57)
+    assert math.isclose(a_2hl, 18500.0, rel_tol=1e-9)
+
+    # 2. Database repository integration check: Co-57 stored with 271.81 d
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_migrations(conn)
+
+    repo = NuclideRepository(conn)
+    co57_data = repo.get_by_code("Co-57")
+    assert co57_data is not None
+    assert co57_data["half_life_value"] == 271.81
+    assert co57_data["half_life_unit"] == "d"
+    assert co57_data["half_life_days"] == 271.81
+    assert co57_data["half_life_uncertainty"] == 0.04
+    assert co57_data["confirmed"] == 1
+
+    # Calculating decay using the repository's Co-57 half-life
+    a_repo = decay_activity(
+        activity_0=a0,
+        elapsed_days=271.81,
+        half_life_days=co57_data["half_life_days"],
+    )
+    assert math.isclose(a_repo, 37000.0, rel_tol=1e-9)
+    conn.close()
 
