@@ -82,13 +82,15 @@ def test_schema_migrations_runner(temp_db_path):
     """TASK-0.3: Migration engine applies Version 1 and records execution in schema_migrations."""
     conn = create_connection(temp_db_path)
     
-    # First run applies migrations 1, 2, 3, and 4
+    # First run applies migrations 1 through 6
     applied = apply_migrations(conn)
     assert 1 in applied
     assert 2 in applied
     assert 3 in applied
     assert 4 in applied
-    assert get_applied_migrations(conn) == [1, 2, 3, 4]
+    assert 5 in applied
+    assert 6 in applied
+    assert get_applied_migrations(conn) == [1, 2, 3, 4, 5, 6]
     
     # Second run is idempotent
     second_run = apply_migrations(conn)
@@ -419,19 +421,25 @@ def test_migration_004_data_preservation_and_nuclides_seeds(temp_db_path):
         assert math.isclose(row["half_life_days"], expected_days, rel_tol=1e-6), (
             f"Nuclide {code} half_life_days {row['half_life_days']} does not match derived {expected_days}"
         )
-        # Verify reference has URL and evaluation year
-        assert "http" in row["reference"] or "MRNI" in row["reference"]
+        # Verify reference has URL and evaluation year (or reference_url populated by migration 006)
+        cursor.execute("SELECT reference_url FROM nuclides WHERE code = ?;", (code,))
+        n_url = cursor.fetchone()[0]
+        assert "http" in row["reference"] or "MRNI" in row["reference"] or "LNHB" in row["reference"] or (n_url and "http" in n_url)
 
     # Standard nuclides confirmed
     assert nuclides["Co-60"]["confirmed"] == 1
     assert nuclides["Cs-137"]["confirmed"] == 1
 
-    # Verify Zn-65 updated to 243.66 d per NuDat 3.0 / ENSDF
-    assert nuclides["Zn-65"]["confirmed"] == 0
-    assert nuclides["Zn-65"]["half_life_value"] == 243.66
-    assert nuclides["Zn-65"]["half_life_unit"] == "d"
-    assert nuclides["Zn-65"]["half_life_days"] == 243.66
-    assert "NuDat" in nuclides["Zn-65"]["reference"]
+    # Verify Zn-65 updated by Migration 006 to 244.01 d per LNHB/DDEP
+    cursor.execute("SELECT * FROM nuclides WHERE code = 'Zn-65';")
+    zn_row = cursor.fetchone()
+    assert zn_row["confirmed"] == 1
+    assert zn_row["half_life_value"] == 244.01
+    assert zn_row["half_life_unit"] == "d"
+    assert zn_row["half_life_days"] == 244.01
+    assert zn_row["half_life_uncertainty"] == 0.09
+    assert "LNHB" in zn_row["reference"]
+    assert "lnhb.fr" in zn_row["reference_url"]
 
     # Other gamma nuclides unconfirmed with detailed published references
     assert nuclides["Am-241"]["confirmed"] == 0
@@ -443,3 +451,127 @@ def test_migration_004_data_preservation_and_nuclides_seeds(temp_db_path):
     conn.close()
 
 
+
+
+def test_migration_005_hpge_specs_and_existing_data(temp_db_path):
+    """TASK-1.9: Migration 005 adds HPGe semiconductor type and detector specs without data loss."""
+    from kashif.db.migrations import (
+        init_migrations_table,
+        migration_001_initial_core_security,
+        migration_002_user_lockout_and_session,
+        migration_003_registries_detectors_instruments_sources,
+        migration_004_multi_isotope_sources,
+        migration_005_hpge_pn_and_detector_specs,
+    )
+    conn = create_connection(temp_db_path)
+    init_migrations_table(conn)
+    migration_001_initial_core_security(conn)
+    migration_002_user_lockout_and_session(conn)
+    migration_003_registries_detectors_instruments_sources(conn)
+    migration_004_multi_isotope_sources(conn)
+
+    # Insert existing detector in migration 004 schema (without semiconductor_type)
+    conn.execute("""
+        INSERT INTO detectors (
+            code, detector_type, crystal_type, manufacturer, model,
+            serial_number, nominal_voltage, voltage_polarity,
+            status, created_at, updated_at
+        ) VALUES (
+            'HPGE-OLD-01', 'HPGE', 'COAXIAL', 'Canberra', 'GC2018',
+            'SN-OLD-01', 3000.0, 'POSITIVE',
+            'ACTIVE', '2024-01-01T00:00:00', '2024-01-01T00:00:00'
+        );
+    """)
+    conn.commit()
+
+    # Apply Migration 005
+    migration_005_hpge_pn_and_detector_specs(conn)
+
+    # Verify column existence and defaults on legacy record
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM detectors WHERE code = 'HPGE-OLD-01';")
+    row = cursor.fetchone()
+    assert row is not None
+    assert row["semiconductor_type"] == "UNSPECIFIED"
+    assert row["certified_polarity"] is None
+    assert row["certificate_ref"] is None
+    assert row["cooling_hours_cert"] is None
+    assert row["hv_ramp_max_v_per_s"] == 10.0
+    assert row["hv_ramp_reference"] is None
+
+    # Test CHECK constraint: invalid semiconductor_type rejected
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("""
+            INSERT INTO detectors (
+                code, detector_type, crystal_type, semiconductor_type,
+                manufacturer, model, serial_number, nominal_voltage,
+                voltage_polarity, status, created_at, updated_at
+            ) VALUES (
+                'HPGE-BAD', 'HPGE', 'COAXIAL', 'INVALID_TYPE',
+                'Ortec', 'GEM', 'SN-BAD', 2500.0,
+                'POSITIVE', 'ACTIVE', '2024-01-01T00:00:00', '2024-01-01T00:00:00'
+            );
+        """)
+
+    cursor.close()
+    conn.close()
+
+
+def test_migration_006_nuclides_uncertainty_and_zn65_ddep(temp_db_path):
+    """TASK-1.9: Migration 006 updates Zn-65 to LNHB/DDEP and preserves custom nuclides."""
+    from kashif.db.migrations import (
+        init_migrations_table,
+        migration_001_initial_core_security,
+        migration_002_user_lockout_and_session,
+        migration_003_registries_detectors_instruments_sources,
+        migration_004_multi_isotope_sources,
+        migration_005_hpge_pn_and_detector_specs,
+        migration_006_nuclides_uncertainty_and_zn65_ddep,
+    )
+    conn = create_connection(temp_db_path)
+    init_migrations_table(conn)
+    migration_001_initial_core_security(conn)
+    migration_002_user_lockout_and_session(conn)
+    migration_003_registries_detectors_instruments_sources(conn)
+    migration_004_multi_isotope_sources(conn)
+    migration_005_hpge_pn_and_detector_specs(conn)
+
+    # Insert a custom radionuclide (is_custom = 1)
+    conn.execute("""
+        INSERT INTO nuclides (
+            code, name_ar, name_en, half_life_days, half_life_value,
+            half_life_unit, confirmed, reference, is_custom, created_at, updated_at
+        ) VALUES (
+            'Custom-99', 'مخصص-99', 'Custom-99', 100.0, 100.0,
+            'd', 0, 'Internal Lab Ref', 1, '2024-01-01T00:00:00', '2024-01-01T00:00:00'
+        );
+    """)
+    conn.commit()
+
+    # Apply Migration 006
+    migration_006_nuclides_uncertainty_and_zn65_ddep(conn)
+
+    cursor = conn.cursor()
+
+    # 1. Custom nuclide was NOT touched
+    cursor.execute("SELECT * FROM nuclides WHERE code = 'Custom-99';")
+    custom_row = cursor.fetchone()
+    assert custom_row is not None
+    assert custom_row["half_life_days"] == 100.0
+    assert custom_row["reference"] == "Internal Lab Ref"
+    assert custom_row["is_custom"] == 1
+
+    # 2. Zn-65 was corrected per LNHB/DDEP (Decision 15 / TASK-1.9)
+    cursor.execute("SELECT * FROM nuclides WHERE code = 'Zn-65';")
+    zn_row = cursor.fetchone()
+    assert zn_row is not None
+    assert zn_row["half_life_value"] == 244.01
+    assert zn_row["half_life_days"] == 244.01
+    assert zn_row["half_life_uncertainty"] == 0.09
+    assert zn_row["confirmed"] == 1
+    assert "LNHB" in zn_row["reference"]
+    assert "http://www.lnhb.fr/nuclides/Zn-65_tables.pdf" in zn_row["reference_url"]
+    assert zn_row["reference_accessed"] == "2026-10-27"
+
+    cursor.close()
+    conn.close()

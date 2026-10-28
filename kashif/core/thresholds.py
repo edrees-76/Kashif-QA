@@ -120,14 +120,6 @@ class SystemThresholds(BaseModel):
         description_ar="النسبة الدنيا للكفاءة المقاسة مقارنة بالاسمية لتفادي العطل (80%)",
     )
 
-    # R-NAI-01
-    nai_pmt_voltage_tolerance_pct: ThresholdEntry = ThresholdEntry(
-        value=2.0,
-        confirmed=False,
-        source="IAEA MRNI-504 Section 3.2.1 [TBC: يحتاج تأكيد المهندس]",
-        description_ar="سماحية تذبذب جهد تغذية PMT المسموحة (%)",
-    )
-
     # R-NAI-02
     nai_resolution_pass_pct: ThresholdEntry = ThresholdEntry(
         value=7.5,
@@ -143,16 +135,16 @@ class SystemThresholds(BaseModel):
     )
 
     # R-NAI-03
-    nai_gain_drift_max_channels: ThresholdEntry = ThresholdEntry(
-        value=2.0,
-        confirmed=False,
-        source="معايير استقرار مطيافية NaI [TBC: يحتاج تأكيد المهندس]",
-        description_ar="الحد الأقصى لانجراف قمة السيزيوم (قنوات)",
+    nai_gain_drift_max_pct: ThresholdEntry = ThresholdEntry(
+        value=1.0,
+        confirmed=True,
+        source="تأكيد المهندس (القرار 16)",
+        description_ar="الحد الأقصى لانجراف قمة السيزيوم كنسبة مئوية من طاقة القمة (%)",
     )
     nai_gain_drift_time_hours: ThresholdEntry = ThresholdEntry(
         value=2.0,
-        confirmed=False,
-        source="معايير استقرار مطيافية NaI [TBC: يحتاج تأكيد المهندس]",
+        confirmed=True,
+        source="تأكيد المهندس (القرار 16)",
         description_ar="المدة الزمنية المعيارية لمراقبة انجراف القمة (ساعات)",
     )
 

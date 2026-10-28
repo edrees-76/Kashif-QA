@@ -76,32 +76,14 @@ def logo_file(mode=None) -> str:
 
 
 def calendar_arrow_files() -> Tuple[str, str]:
-    """Return forward-slashed absolute paths for (prev_month_arrow, next_month_arrow)."""
+    """Return forward-slashed absolute paths for (prev_month_arrow, next_month_arrow).
+    
+    Static asset files from repository assets folder.
+    NEVER writes or modifies files at runtime.
+    """
     assets = os.path.join(os.path.dirname(__file__), "assets")
     prev_icon = os.path.join(assets, "cal_arrow_right_white.png").replace("\\", "/")
     next_icon = os.path.join(assets, "cal_arrow_left_white.png").replace("\\", "/")
-    if not (os.path.exists(prev_icon) and os.path.exists(next_icon)):
-        try:
-            from PyQt6.QtCore import QPointF, Qt
-            from PyQt6.QtGui import QColor, QPainter, QPixmap, QPolygonF
-
-            os.makedirs(assets, exist_ok=True)
-            for direction, path in [("right", prev_icon), ("left", next_icon)]:
-                pm = QPixmap(20, 20)
-                pm.fill(Qt.GlobalColor.transparent)
-                p = QPainter(pm)
-                p.setRenderHint(QPainter.RenderHint.Antialiasing)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor("#FFFFFF"))
-                if direction == "right":
-                    poly = QPolygonF([QPointF(6, 4), QPointF(14, 10), QPointF(6, 16)])
-                else:
-                    poly = QPolygonF([QPointF(14, 4), QPointF(6, 10), QPointF(14, 16)])
-                p.drawPolygon(poly)
-                p.end()
-                pm.save(path)
-        except Exception as e:
-            logger.debug("Failed to auto-generate calendar arrow icon: %s", e)
     return prev_icon, next_icon
 
 
@@ -208,7 +190,7 @@ QPushButton.danger:hover {{
     background-color: #8E1C15;
 }}
 
-QLineEdit, QTextEdit, QComboBox {{
+QLineEdit, QTextEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox {{
     background-color: #FFFFFF;
     color: {COLORS["light_ink"]};
     border: 1px solid {COLORS["light_line"]};
@@ -243,6 +225,32 @@ QComboBox::down-arrow {{
     height: 0px;
 }}
 
+
+QTableWidget QDateEdit {{
+    background-color: #FFFFFF;
+    color: {COLORS["light_ink"]};
+    border: 1px solid {COLORS["light_line"]};
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+}}
+
+QTableWidget QDateEdit:focus {{
+    border: 2px solid {COLORS["teal"]};
+}}
+
+QTableWidget QDateEdit {{
+    background-color: #071224;
+    color: {COLORS["dark_ink"]};
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+}}
+
+QTableWidget QDateEdit:focus {{
+    border: 2px solid {COLORS["dark_teal"]};
+}}
 
 QTableWidget {{
     background-color: #FFFFFF;
@@ -661,7 +669,7 @@ QPushButton:hover {{
     color: {COLORS["dark_surface"]};
 }}
 
-QLineEdit, QTextEdit, QComboBox {{
+QLineEdit, QTextEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox {{
     background-color: #071224;
     color: {COLORS["dark_ink"]};
     border: 1px solid {COLORS["dark_line"]};

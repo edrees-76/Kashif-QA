@@ -52,3 +52,13 @@ def format_mixed_text(text: str) -> str:
         formatted = pattern.sub(f"{LRI}{term}{PDI}", formatted)
         
     return formatted
+
+
+def isolate_unit_bidi(name_ar: str, symbol: str) -> str:
+    """Format Arabic unit name with its Latin symbol isolated in LTR parentheses.
+    
+    Prevents parenthesis inversion and displacement in RTL combo boxes.
+    Example: 'بيكرل (Bq)', 'Bq' -> 'بيكرل \u2066(Bq)\u2069'
+    """
+    base_ar = name_ar.split("(")[0].strip()
+    return f"{base_ar} {isolate_ltr(f'({symbol})')}"

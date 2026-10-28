@@ -17,6 +17,7 @@ from PyQt6.QtCore import Qt
 from kashif.core.models import (
     DetectorType,
     HPGeDetector,
+    SemiconductorType,
     Instrument,
     InstrumentType,
     Nuclide,
@@ -204,8 +205,8 @@ def test_dashboard_summary_counts_accuracy(qtbot, db_conn, technician_session):
     src_repo = SourceRepository(db_conn)
 
     # Seed 2 detectors (1 active, 1 retired)
-    d1 = det_repo.create(HPGeDetector(code="DET-A1", manufacturer="Ortec", model="G1", serial_number="SN-A1", nominal_voltage=3000), technician_session)
-    d2 = det_repo.create(HPGeDetector(code="DET-A2", manufacturer="Ortec", model="G2", serial_number="SN-A2", nominal_voltage=3000), technician_session)
+    d1 = det_repo.create(HPGeDetector(code="DET-A1", manufacturer="Ortec", model="G1", serial_number="SN-A1", nominal_voltage=3000, semiconductor_type=SemiconductorType.P_TYPE), technician_session)
+    d2 = det_repo.create(HPGeDetector(code="DET-A2", manufacturer="Ortec", model="G2", serial_number="SN-A2", nominal_voltage=3000, semiconductor_type=SemiconductorType.P_TYPE), technician_session)
     det_repo.retire(d2, technician_session, "Retired")
 
     # Seed 2 instruments (1 valid cal, 1 expired cal)

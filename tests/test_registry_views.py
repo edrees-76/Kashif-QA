@@ -20,6 +20,7 @@ from kashif.core.models import (
     CrystalType,
     DetectorType,
     HPGeDetector,
+    SemiconductorType,
     Instrument,
     InstrumentType,
     NaIDetector,
@@ -108,6 +109,11 @@ def test_add_hpge_detector_dialog_visibility_and_creation(qtbot, db_conn, tech_s
 
     # Lesson check: assert form fields and buttons are actually visible
     assert dlg.radio_hpge.isVisible()
+    assert dlg.combo_semiconductor.isVisible()
+    assert dlg.combo_cert_polarity.isVisible()
+    assert dlg.edit_cert_ref.isVisible()
+    assert dlg.edit_cooling_hours.isVisible()
+    assert dlg.edit_hv_ramp.isVisible()
     assert dlg.edit_code.isVisible()
     assert dlg.edit_manufacturer.isVisible()
     assert dlg.edit_model.isVisible()
@@ -116,13 +122,16 @@ def test_add_hpge_detector_dialog_visibility_and_creation(qtbot, db_conn, tech_s
     assert dlg.btn_save.isVisible()
     assert dlg.btn_cancel.isVisible()
 
-    # Fill HPGe data
+    # Fill HPGe data with mandatory semiconductor_type
     dlg.edit_code.setText("HPGE-LAB-01")
     dlg.edit_manufacturer.setText("Mirion")
     dlg.edit_model.setText("Canberra-BE3830")
     dlg.edit_serial.setText("SN-88310")
     dlg.edit_voltage.setText("3500")
     dlg.edit_facility.setText("معمل أشعة جاما")
+    dlg.combo_semiconductor.setCurrentIndex(1)  # P-Type
+    dlg.combo_cert_polarity.setCurrentIndex(1)  # Positive
+    dlg.edit_cert_ref.setText("CERT-MIRION-2024")
 
     # Click Save
     dlg.btn_save.click()
@@ -132,6 +141,9 @@ def test_add_hpge_detector_dialog_visibility_and_creation(qtbot, db_conn, tech_s
     assert rec is not None
     assert rec["manufacturer"] == "Mirion"
     assert rec["nominal_voltage"] == 3500.0
+    assert rec["semiconductor_type"] == "P_TYPE"
+    assert rec["certified_polarity"] == "POSITIVE"
+    assert rec["certificate_ref"] == "CERT-MIRION-2024" 
 
 
 def test_add_nai_detector_dialog_visibility_and_creation(qtbot, db_conn, tech_session):
@@ -174,6 +186,7 @@ def test_detectors_view_table_and_retire(qtbot, db_conn, tech_session):
     """Test detectors view table population, details dialog, and retirement."""
     repo = DetectorRepository(db_conn)
     d_id = repo.create(HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-VIEW",
         manufacturer="Ortec",
         model="GEM",
@@ -357,6 +370,7 @@ def test_global_quick_search_finds_and_opens_dialog(qtbot, db_conn, tech_session
     """Test top bar quick search finds entity and opens detail dialog."""
     det_repo = DetectorRepository(db_conn)
     det_repo.create(HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-QUICK-SN",
         manufacturer="Mirion",
         model="BEGe",
@@ -436,6 +450,7 @@ def test_close_secondary_windows_closes_dialogs(qtbot, db_conn, tech_session):
 def test_detectors_view_full_workflow(qtbot, db_conn, tech_session):
     repo = DetectorRepository(db_conn)
     det_id = repo.create(HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-WF-1",
         manufacturer="Canberra",
         model="GC2018",
@@ -617,7 +632,8 @@ def test_quick_search_results_dialog_multiple_matches(qtbot, db_conn, tech_sessi
     inst_repo = InstrumentRepository(db_conn)
     src_repo = SourceRepository(db_conn)
 
-    d_id = det_repo.create(HPGeDetector(code="DET-MULTI-1", manufacturer="Ortec", model="M1", serial_number="SN-M1", nominal_voltage=3000), tech_session)
+    d_id = det_repo.create(HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, code="DET-MULTI-1", manufacturer="Ortec", model="M1", serial_number="SN-M1", nominal_voltage=3000), tech_session)
     i_id = inst_repo.create(Instrument(instrument_type=InstrumentType.NIM_BIN, manufacturer="Ortec", model="M1-BIN", serial_number="SN-M2"), tech_session)
     s_id = src_repo.create(RadioactiveSource(
         source_code="SRC-MULTI-1",
@@ -725,11 +741,14 @@ def test_detector_detail_and_edit_nai_coverage(qtbot, db_conn, tech_session):
     dlg_dup = AddEditDetectorDialog(repo=repo, session=tech_session)
     qtbot.addWidget(dlg_dup)
     dlg_dup.show()
+    dlg_dup.radio_nai.setChecked(True)
     dlg_dup.edit_code.setText("NAI-DETAIL-1")  # Duplicate
+    dlg_dup.edit_nai_diam.setText("2.0")
+    dlg_dup.edit_nai_height.setText("2.0")
     dlg_dup.edit_manufacturer.setText("Bicron")
     dlg_dup.edit_model.setText("Other")
     dlg_dup.edit_serial.setText("SN-DIFF")
-    dlg_dup.edit_voltage.setText("800")
+    dlg_dup.edit_nai_voltage.setText("800")
     dlg_dup.btn_save.click()
     assert "مسجل مسبقاً" in dlg_dup.lbl_error.text()
     dlg_dup.close()
@@ -741,6 +760,7 @@ def test_retirement_confirmation_accept_and_reject(qtbot, db_conn, tech_session,
 
     det_repo = DetectorRepository(db_conn)
     d_id = det_repo.create(HPGeDetector(
+        semiconductor_type=SemiconductorType.P_TYPE, 
         code="HPGE-RETIRE-TEST",
         manufacturer="Canberra",
         model="GC1018",
@@ -1064,3 +1084,283 @@ def test_theme_calendar_arrow_files_and_status_color(qtbot, monkeypatch):
 
 
 
+
+
+def test_detectors_view_unspecified_badge_and_rejection(qtbot, db_conn, tech_session):
+    """TASK-1.9: Detectors view displays neutral badge for UNSPECIFIED crystal, and dialog rejects UNSPECIFIED."""
+    # 1. Insert detector directly in DB with UNSPECIFIED
+    db_conn.execute("""
+        INSERT INTO detectors (
+            code, detector_type, crystal_type, semiconductor_type,
+            manufacturer, model, serial_number, nominal_voltage,
+            voltage_polarity, status, created_at, updated_at
+        ) VALUES (
+            'HPGE-LEGACY-01', 'HPGE', 'COAXIAL', 'UNSPECIFIED',
+            'Mirion', 'GC2018', 'SN-LEG-01', 3000.0,
+            'POSITIVE', 'ACTIVE', '2024-01-01T00:00:00', '2024-01-01T00:00:00'
+        );
+    """)
+    db_conn.commit()
+
+    view = DetectorsView(conn=db_conn, session=tech_session)
+    qtbot.addWidget(view)
+    view.show()
+    assert view.isVisible()
+
+    # Table contains neutral badge text
+    item_type = view.table.item(0, 2)
+    assert item_type is not None
+    assert "نوع البلورة غير محدد — يلزم التعبئة" in item_type.text()
+
+    # Detail dialog displays neutral badge text
+    repo = DetectorRepository(db_conn)
+    rec = repo.get_by_code("HPGE-LEGACY-01")
+    detail_dlg = DetectorDetailDialog(rec)
+    qtbot.addWidget(detail_dlg)
+    detail_dlg.show()
+    assert detail_dlg.isVisible()
+    detail_dlg.close()
+
+    # Edit dialog rejects saving without specifying semiconductor type
+    edit_dlg = AddEditDetectorDialog(repo=repo, session=tech_session, detector_id=rec["id"])
+    qtbot.addWidget(edit_dlg)
+    edit_dlg.show()
+    assert edit_dlg.isVisible()
+    edit_dlg.btn_save.click()
+    assert "نوع شبه الموصل" in edit_dlg.lbl_error.text()
+    edit_dlg.close()
+
+
+def test_nuclides_reference_dialog_and_detail_card(qtbot, db_conn, tech_session):
+    """TASK-1.9: Nuclides reference dialog and card display uncertainty, URL, and confirmed status."""
+    from kashif.gui.views.sources_view import NuclidesReferenceDialog, NuclideDetailCardDialog
+    from kashif.db.repositories import NuclideRepository
+
+    repo = NuclideRepository(db_conn)
+    zn_data = repo.get_by_code("Zn-65")
+    assert zn_data is not None
+
+    # 1. Detail Card Dialog
+    card_dlg = NuclideDetailCardDialog(zn_data)
+    qtbot.addWidget(card_dlg)
+    card_dlg.show()
+    assert card_dlg.isVisible()
+    card_dlg.close()
+
+    # 2. Reference Dialog
+    ref_dlg = NuclidesReferenceDialog(repo)
+    qtbot.addWidget(ref_dlg)
+    ref_dlg.show()
+    assert ref_dlg.isVisible()
+    assert ref_dlg.table.rowCount() >= 12
+    ref_dlg.close()
+
+
+def test_unit_dropdown_bidi_isolation(qtbot, db_conn, tech_session):
+    """TASK-1.9: Unit dropdowns use LTR isolation for (Bq) to prevent RTL inversion."""
+    from kashif.gui.views.sources_view import AddEditSourceDialog
+    from kashif.db.repositories import SourceRepository
+    from kashif.gui.bidi import isolate_ltr
+
+    repo = SourceRepository(db_conn)
+    dlg = AddEditSourceDialog(repo=repo, session=tech_session)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    assert dlg.isVisible()
+
+    # Check cell widget combo in table
+    combo_unit = dlg.tbl_isotopes.cellWidget(0, 2)
+    assert combo_unit is not None
+    # Verify that the first item (Bq) contains the LTR-isolated symbol
+    first_text = combo_unit.itemText(0)
+    assert isolate_ltr("(Bq)") in first_text
+    dlg.close()
+
+
+def test_source_dialog_date_edit_cell_contrast_real_grab(qtbot, db_conn, tech_session):
+    """TASK-1.9 (Defect 2): قياس التباين الحقيقي لخلية QDateEdit داخل جدول النظائر بالوضعين عبر grab().
+    
+    منهجية الفحص:
+    1. فتح حوار إضافة/تعديل المصدر وتطبيق النمط (get_stylesheet).
+    2. استخراج ودجت التاريخ QDateEdit من الخلية (0, 3) والتأكد من ظهوره الفعلي (isVisible).
+    3. التقاط صورة نقطية للودجت عبر date_edit.grab().toImage().
+    4. أخذ عيّنة شاملة لجميع ألوان البكسلات الفعلية المرسومة داخل الحقل.
+    5. حساب الإضاءة النسبية (Relative Luminance) للون الأفتح والأغمق.
+    6. حساب نسبة التباين وفق صيغة WCAG: CR = (L_max + 0.05) / (L_min + 0.05).
+    7. التأكد من أن نسبة التباين >= 3.0:1 (الحد العملي الأدنى المقبول لعناصر الواجهة والنصوص المنعمة antialiased).
+    """
+    from kashif.gui.theme import set_mode, get_stylesheet, relative_luminance
+    from kashif.gui.views.sources_view import AddEditSourceDialog
+    from kashif.db.repositories import SourceRepository
+
+    def calc_cr(c1: str, c2: str) -> float:
+        l1 = relative_luminance(c1)
+        l2 = relative_luminance(c2)
+        return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+
+    repo = SourceRepository(db_conn)
+
+    for mode in ["light", "dark"]:
+        set_mode(mode)
+        dlg = AddEditSourceDialog(repo=repo, session=tech_session)
+        dlg.setStyleSheet(get_stylesheet())
+        qtbot.addWidget(dlg)
+        dlg.show()
+        assert dlg.isVisible(), f"Dialog must be visible in {mode} mode"
+
+        date_widget = dlg.tbl_isotopes.cellWidget(0, 3)
+        assert date_widget is not None
+        assert date_widget.isVisible(), f"DateEdit cell must be visible in {mode} mode"
+
+        # Grab actual rendered pixels of the cell
+        img = date_widget.grab().toImage()
+        assert img.width() > 0 and img.height() > 0
+
+        colors = set(
+            img.pixelColor(x, y).name()
+            for x in range(img.width())
+            for y in range(img.height())
+        )
+        assert len(colors) >= 2, "Rendered date widget must contain at least text and background pixels"
+
+        lum = [(c, relative_luminance(c)) for c in colors]
+        darkest = min(lum, key=lambda x: x[1])[0]
+        lightest = max(lum, key=lambda x: x[1])[0]
+        cr = calc_cr(darkest, lightest)
+
+        assert cr >= 3.0, (
+            f"DateEdit contrast ratio {cr:.2f}:1 is below 3:1 in {mode} mode! "
+            f"(darkest={darkest}, lightest={lightest})"
+        )
+
+        dlg.close()
+
+    set_mode("light")
+
+
+def test_source_dialog_date_calendar_popup_contrast_and_visibility_real_grab(qtbot, db_conn, tech_session):
+    """TASK-1.9 (Defect 2): التحقق من فتح نافذة التقويم المنبثقة للخلية وقراءة تباينها الحقيقي بالوضعين."""
+    from PyQt6.QtCore import Qt, QPoint
+    from PyQt6.QtTest import QTest
+    from kashif.gui.theme import set_mode, get_stylesheet, relative_luminance
+    from kashif.gui.views.sources_view import AddEditSourceDialog
+    from kashif.db.repositories import SourceRepository
+
+    def calc_cr(c1: str, c2: str) -> float:
+        l1 = relative_luminance(c1)
+        l2 = relative_luminance(c2)
+        return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+
+    repo = SourceRepository(db_conn)
+
+    for mode in ["light", "dark"]:
+        set_mode(mode)
+        dlg = AddEditSourceDialog(repo=repo, session=tech_session)
+        dlg.setStyleSheet(get_stylesheet())
+        qtbot.addWidget(dlg)
+        dlg.show()
+        assert dlg.isVisible()
+
+        date_widget = dlg.tbl_isotopes.cellWidget(0, 3)
+        assert date_widget is not None
+        assert date_widget.isVisible()
+
+        # Trigger calendar popup (in RTL layout the drop-down arrow is on the left; in LTR on the right)
+        cal = date_widget.calendarWidget()
+        if date_widget.isRightToLeft():
+            btn_pos = QPoint(10, date_widget.height() // 2)
+        else:
+            btn_pos = QPoint(date_widget.width() - 10, date_widget.height() // 2)
+        QTest.mouseClick(date_widget, Qt.MouseButton.LeftButton, pos=btn_pos)
+        qtbot.wait(100)
+
+        if not cal.isVisible():
+            # Fallback trigger: Alt+Down standard shortcut to show date popup
+            date_widget.setFocus()
+            QTest.keyClick(date_widget, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)
+            qtbot.wait(100)
+
+        # Ensure calendar is visible
+        assert cal is not None
+        assert cal.isVisible(), f"Calendar popup must be visible after clicking arrow in {mode} mode"
+
+        # Grab calendar popup pixels
+        img_cal = cal.grab().toImage()
+        assert img_cal.width() > 0 and img_cal.height() > 0
+
+        cal_colors = set(
+            img_cal.pixelColor(x, y).name()
+            for x in range(img_cal.width())
+            for y in range(img_cal.height())
+        )
+        lum_cal = [(c, relative_luminance(c)) for c in cal_colors]
+        darkest_cal = min(lum_cal, key=lambda x: x[1])[0]
+        lightest_cal = max(lum_cal, key=lambda x: x[1])[0]
+        cr_cal = calc_cr(darkest_cal, lightest_cal)
+
+        assert cr_cal >= 3.0, (
+            f"Calendar popup contrast ratio {cr_cal:.2f}:1 is below 3:1 in {mode} mode! "
+            f"(darkest={darkest_cal}, lightest={lightest_cal})"
+        )
+
+        dlg.close()
+
+    set_mode("light")
+
+
+def test_detector_dialog_radio_labels_bidi_isolation(qtbot, db_conn, tech_session):
+    """TASK-1.9 (Defect 4): فحص عزل الأقواس في تسميات أزرار الراديو بحوار الكاشف ومنع ((NaI(Tl))."""
+    from kashif.gui.bidi import isolate_ltr
+    from kashif.gui.views.detectors_view import AddEditDetectorDialog
+    from kashif.db.repositories import DetectorRepository
+    from kashif.gui.theme import set_mode, get_stylesheet
+
+    repo = DetectorRepository(db_conn)
+
+    for mode in ["light", "dark"]:
+        set_mode(mode)
+        dlg = AddEditDetectorDialog(repo=repo, session=tech_session)
+        dlg.setStyleSheet(get_stylesheet())
+        qtbot.addWidget(dlg)
+        dlg.show()
+        assert dlg.isVisible()
+
+        nai_text = dlg.radio_nai.text()
+        hpge_text = dlg.radio_hpge.text()
+
+        # Assert no doubled opening parentheses
+        assert "((" not in nai_text, f"Doubled parentheses found in NaI radio label: {nai_text}"
+        assert "((" not in hpge_text, f"Doubled parentheses found in HPGe radio label: {hpge_text}"
+
+        # Assert proper bidi isolate formatting
+        expected_nai = f"كاشف يوديد الصوديوم الوميضي {isolate_ltr('(NaI(Tl))')}"
+        expected_hpge = f"كاشف الجرمانيوم عالي النقاء {isolate_ltr('(Coaxial HPGe)')}"
+        assert nai_text == expected_nai
+        assert hpge_text == expected_hpge
+
+        assert dlg.radio_nai.isVisible()
+        assert dlg.radio_hpge.isVisible()
+        dlg.close()
+
+    set_mode("light")
+
+
+def test_no_file_creation_in_assets_on_theme_switch(tmp_path):
+    """TASK-1.9: Verify that calendar arrow files are static and no runtime files are written."""
+    import os
+    from kashif.gui.theme import calendar_arrow_files, set_mode
+
+    assets_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "kashif", "gui", "assets"))
+    initial_files = set(os.listdir(assets_dir))
+
+    # Call calendar_arrow_files multiple times
+    r_path, l_path = calendar_arrow_files()
+    assert os.path.exists(r_path)
+    assert os.path.exists(l_path)
+
+    # Switch themes
+    set_mode("dark")
+    set_mode("light")
+
+    final_files = set(os.listdir(assets_dir))
+    assert initial_files == final_files, "Theme calls must not generate temporary runtime files in assets directory."

@@ -12,11 +12,12 @@ Pure decision functions implementing all rules from docs/decision-rules.md:
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from kashif.core.models import (
+    HPGeDetector,
     Verdict,
     VoltagePolarity,
     WindowStatus,
@@ -105,32 +106,41 @@ def eval_r_hpge_02_window_scratch(
 
 def eval_r_hpge_03_cooling_time(
     cooling_hours: float,
+    cooling_hours_cert: Optional[float] = None,
     thresholds: Optional[SystemThresholds] = None,
 ) -> RuleResult:
     """R-HPGE-03: مدة التبريد بالنيتروجين السائل.
     
-    الشرط: cooling_hours < 6.0
-    الحكم: WAIT (أو BLOCK لرفع الجهد)
-    المرجع: IAEA MRNI-507 ص 7 البند 3.4.3 (CONFIRMED).
+    الشرط: cooling_hours < max(6.0, cooling_hours_cert)
+    الحكم: BLOCK لرفع الجهد
+    المرجع: IAEA MRNI-507 ص 7 البند 3.4.3 والقرار 15-2 (CONFIRMED).
     """
     t = thresholds or get_default_thresholds()
-    entry = t.hpge_cooling_min_hours
-    if cooling_hours < entry.value:
+    default_min = t.hpge_cooling_min_hours.value
+
+    if cooling_hours_cert is not None and cooling_hours_cert > default_min:
+        effective_limit = cooling_hours_cert
+        source_desc = f"شهادة الكاشف ({cooling_hours_cert:.1f} h)"
+    else:
+        effective_limit = default_min
+        source_desc = f"الحد الأدنى الافتراضي ({default_min:.1f} h)"
+
+    if cooling_hours < effective_limit:
         return RuleResult(
             rule_id="R-HPGE-03",
-            verdict=Verdict.WAIT,
-            message_ar=f"مدة التبريد بالنيتروجين ({cooling_hours:.2f} h) أقل من {entry.value:.1f} ساعات؛ حظر رفع الجهد العالي والانتظار حتى اكتمال 6 ساعات على الأقل",
+            verdict=Verdict.BLOCK,
+            message_ar=f"مدة التبريد بالنيتروجين ({cooling_hours:.2f} h) أقل من الحد المطلوب ({effective_limit:.1f} h حسب {source_desc})؛ حظر رفع الجهد العالي والانتظار حتى استكمال التبريد",
             measured=cooling_hours,
-            limit=f">= {entry.value:.1f}",
-            confirmed=entry.confirmed,
+            limit=f">= {effective_limit:.1f} h ({source_desc})",
+            confirmed=t.hpge_cooling_min_hours.confirmed,
         )
     return RuleResult(
         rule_id="R-HPGE-03",
         verdict=Verdict.PASS,
-        message_ar=f"مدة التبريد كافية ({cooling_hours:.2f} h >= {entry.value:.1f} h)",
+        message_ar=f"مدة التبريد كافية ({cooling_hours:.2f} h >= {effective_limit:.1f} h حسب {source_desc})",
         measured=cooling_hours,
-        limit=f">= {entry.value:.1f}",
-        confirmed=entry.confirmed,
+        limit=f">= {effective_limit:.1f} h ({source_desc})",
+        confirmed=t.hpge_cooling_min_hours.confirmed,
     )
 
 
@@ -220,63 +230,134 @@ def eval_r_hpge_05_nim_voltages(
 
 def eval_r_hpge_06_hv_polarity(
     applied_polarity: VoltagePolarity,
-    nominal_polarity: VoltagePolarity,
+    nominal_polarity: Optional[VoltagePolarity] = None,
+    certified_polarity: Optional[VoltagePolarity] = None,
     thresholds: Optional[SystemThresholds] = None,
 ) -> RuleResult:
     """R-HPGE-06: قطبية الجهد العالي.
     
-    الشرط: قطبية مجهز الجهد لا تطابق القطبية المدونة على ملصق الكاشف.
-    الحكم: BLOCK
-    المرجع: IAEA MRNI-507 ص 10 البند 3.5.5 (CONFIRMED).
+    يقارن قطبية المجهز المسجلة بـ certified_polarity عند وجودها.
+    إن لم توجد شهادة موثقة فالحكم توثيق ناقص (WARNING) مع مقارنة الاسمية.
+    أي عدم تطابق يمثل حظراً صارماً (BLOCK).
+    المرجع: IAEA MRNI-507 ص 10 البند 3.5.5 والقرار 15-3 (CONFIRMED).
     """
-    if applied_polarity != nominal_polarity:
+    has_cert = certified_polarity is not None
+
+    if not has_cert:
+        # توثيق ناقص
+        if nominal_polarity is not None and applied_polarity != nominal_polarity:
+            return RuleResult(
+                rule_id="R-HPGE-06",
+                verdict=Verdict.BLOCK,
+                message_ar=f"قطبية مجهز الجهد ({applied_polarity.value}) تخالف القطبية الاسمية للكاشف ({nominal_polarity.value}) مع نقص توثيق قطبية الشهادة؛ حظر رفع الجهد منعاً لتلف بلورة الجرمانيوم",
+                measured=applied_polarity.value,
+                limit=nominal_polarity.value,
+                confirmed=True,
+            )
+        return RuleResult(
+            rule_id="R-HPGE-06",
+            verdict=Verdict.WARNING,
+            message_ar=f"توثيق ناقص: لم تُسجل القطبية المعتمدة في شهادة الكاشف؛ تم التحقق مقابل القطبية الاسمية ({applied_polarity.value}) مع وجوب التأكد من ملصق الكاشف قبل رفع الجهد",
+            measured=applied_polarity.value,
+            limit=nominal_polarity.value if nominal_polarity else "UNKNOWN",
+            confirmed=False,
+        )
+
+    if applied_polarity != certified_polarity:
         return RuleResult(
             rule_id="R-HPGE-06",
             verdict=Verdict.BLOCK,
-            message_ar=f"قطبية مجهز الجهد ({applied_polarity.value}) لا تطابق قطبية الكاشف ({nominal_polarity.value})؛ حظر رفع الجهد منعاً لتلف بلورة الجرمانيوم نهائياً",
+            message_ar=f"قطبية مجهز الجهد ({applied_polarity.value}) لا تطابق القطبية المعتمدة في شهادة الكاشف ({certified_polarity.value})؛ حظر رفع الجهد منعاً لتلف بلورة الجرمانيوم نهائياً",
             measured=applied_polarity.value,
-            limit=nominal_polarity.value,
+            limit=certified_polarity.value,
             confirmed=True,
         )
+
     return RuleResult(
         rule_id="R-HPGE-06",
         verdict=Verdict.PASS,
-        message_ar=f"قطبية الجهد العالي مطابقة لملصق الكاشف ({applied_polarity.value})",
+        message_ar=f"قطبية الجهد العالي مطابقة لشهادة الكاشف المعتمدة ({applied_polarity.value})",
         measured=applied_polarity.value,
-        limit=nominal_polarity.value,
+        limit=certified_polarity.value,
         confirmed=True,
     )
 
 
 def eval_r_hpge_07_hv_ramp_rate(
     ramp_rate_v_per_s: float,
+    max_rate_limit: Optional[float] = None,
+    reference: Optional[str] = None,
     thresholds: Optional[SystemThresholds] = None,
 ) -> RuleResult:
     """R-HPGE-07: معدل رفع الجهد العالي.
     
-    الشرط: رفع الجهد بمعدل يزيد عن 100V كل 10 ثوانٍ (10 V/s).
-    الحكم: BLOCK
-    المرجع: IAEA MRNI-507 ص 11 البند 3.5.14 (CONFIRMED).
+    الحد الأقصى المسموح يُحفظ لكل كاشف من دليل المصنّع (الافتراضي 10.0 V/s = 100V/10s).
+    تجاوز المعدل حظر صارم (BLOCK) يمنع الانتقال للخطوة التالية.
+    المرجع: IAEA MRNI-507 ص 11 البند 3.5.14 والقرار 15-1 (CONFIRMED).
     """
     t = thresholds or get_default_thresholds()
-    entry = t.hpge_hv_ramp_max_rate_v_per_s
-    if ramp_rate_v_per_s > entry.value:
+    limit_val = max_rate_limit if (max_rate_limit is not None and max_rate_limit > 0) else t.hpge_hv_ramp_max_rate_v_per_s.value
+    ref_desc = f" (مرجع: {reference})" if reference else ""
+
+    if ramp_rate_v_per_s > limit_val:
         return RuleResult(
             rule_id="R-HPGE-07",
             verdict=Verdict.BLOCK,
-            message_ar=f"معدل رفع الجهد العالي ({ramp_rate_v_per_s:.1f} V/s) يتجاوز الحد الأقصى المسموح ({entry.value:.1f} V/s؛ 100V كل 10s)؛ إيقاف الرفع والتأكيد على التدرج الآمن",
+            message_ar=f"معدل رفع الجهد العالي ({ramp_rate_v_per_s:.2f} V/s) يتجاوز الحد الأقصى المسموح للكاشف ({limit_val:.2f} V/s{ref_desc})؛ حظر إكمال الفحص والتأكيد على التدرج الآمن",
             measured=ramp_rate_v_per_s,
-            limit=f"<= {entry.value:.1f} V/s",
-            confirmed=entry.confirmed,
+            limit=f"<= {limit_val:.2f} V/s{ref_desc}",
+            confirmed=t.hpge_hv_ramp_max_rate_v_per_s.confirmed,
         )
     return RuleResult(
         rule_id="R-HPGE-07",
         verdict=Verdict.PASS,
-        message_ar=f"معدل رفع الجهد العالي آمن وضمن الحدود المسموحة ({ramp_rate_v_per_s:.1f} V/s <= {entry.value:.1f} V/s)",
+        message_ar=f"معدل رفع الجهد العالي آمن وضمن الحدود المسموحة للكاشف ({ramp_rate_v_per_s:.2f} V/s <= {limit_val:.2f} V/s{ref_desc})",
         measured=ramp_rate_v_per_s,
-        limit=f"<= {entry.value:.1f} V/s",
-        confirmed=entry.confirmed,
+        limit=f"<= {limit_val:.2f} V/s{ref_desc}",
+        confirmed=t.hpge_hv_ramp_max_rate_v_per_s.confirmed,
     )
+
+
+def evaluate_hv_apply_gate(
+    detector: HPGeDetector,
+    applied_polarity: VoltagePolarity,
+    cooling_hours: float,
+    ramp_rate_v_per_s: float,
+    thresholds: Optional[SystemThresholds] = None,
+) -> Tuple[Verdict, List[RuleResult]]:
+    """بوابة تطبيق الجهد العالي لكاشف الجرمانيوم (HV Apply Gate).
+    
+    دالة نقية تجمع نتائج R-HPGE-03 و R-HPGE-06 و R-HPGE-07 مع حكم مجمّع.
+    أي حكم BLOCK يعني حظر تطبيق الجهد فوراً ولا يتجاوزه تأكيد المستخدم.
+    """
+    res_cooling = eval_r_hpge_03_cooling_time(
+        cooling_hours=cooling_hours,
+        cooling_hours_cert=detector.cooling_hours_cert,
+        thresholds=thresholds,
+    )
+    res_polarity = eval_r_hpge_06_hv_polarity(
+        applied_polarity=applied_polarity,
+        nominal_polarity=detector.voltage_polarity,
+        certified_polarity=detector.certified_polarity,
+        thresholds=thresholds,
+    )
+    res_ramp = eval_r_hpge_07_hv_ramp_rate(
+        ramp_rate_v_per_s=ramp_rate_v_per_s,
+        max_rate_limit=detector.hv_ramp_max_v_per_s,
+        reference=detector.hv_ramp_reference,
+        thresholds=thresholds,
+    )
+
+    results = [res_cooling, res_polarity, res_ramp]
+
+    if any(r.verdict == Verdict.BLOCK for r in results):
+        agg_verdict = Verdict.BLOCK
+    elif any(r.verdict == Verdict.WARNING for r in results):
+        agg_verdict = Verdict.WARNING
+    else:
+        agg_verdict = Verdict.PASS
+
+    return agg_verdict, results
 
 
 def eval_r_hpge_08_preamp_signal(
@@ -590,60 +671,89 @@ def eval_r_hpge_15_efficiency(
 
 def eval_r_nai_01_pmt_voltage(
     drift_pct: float,
+    tolerance_pct: Optional[float] = None,
     thresholds: Optional[SystemThresholds] = None,
 ) -> RuleResult:
     """R-NAI-01: استقرار مجهز الجهد العالي للأنبوب المضاعف الضوئي (PMT).
     
-    الشرط: تذبذب جهد التغذية بنسبة > 2%.
-    الحكم: OUT_OF_SPEC
-    المرجع: IAEA MRNI-504 البند 3.2.1 ([TBC]).
+    حُذفت سماحية 2% المنسوبة وفق القرار 15-7.
+    سماحية جهد تشغيل الكاشف حقل اختياري من مواصفة الكاشف؛
+    وإن غابت فالنتيجة «غير محددة» محايدة (WARNING).
+    المرجع: IAEA MRNI-504 والقرار 15-7.
     """
-    t = thresholds or get_default_thresholds()
-    entry = t.nai_pmt_voltage_tolerance_pct
     abs_drift = abs(drift_pct)
+    if tolerance_pct is None:
+        return RuleResult(
+            rule_id="R-NAI-01",
+            verdict=Verdict.WARNING,
+            message_ar=f"سماحية جهد تشغيل PMT غير محددة في مواصفة الكاشف (الانحراف المقاس: {abs_drift:.2f}%)؛ يلزم مراجعة وثيقة الكاشف",
+            measured=drift_pct,
+            limit="غير محددة في مواصفة الكاشف",
+            confirmed=False,
+        )
 
-    if abs_drift > entry.value:
+    if abs_drift > tolerance_pct:
         return RuleResult(
             rule_id="R-NAI-01",
             verdict=Verdict.OUT_OF_SPEC,
-            message_ar=f"تذبذب جهد التغذية للأنبوب المضاعف الضوئي ({abs_drift:.2f}%) يخرج عن السماحية المسموحة ({entry.value:.1f}%)؛ فحص وضبط وحدة الجهد العالي",
+            message_ar=f"تذبذب جهد التغذية للأنبوب المضاعف الضوئي ({abs_drift:.2f}%) يخرج عن سماحية الكاشف المعتمدة ({tolerance_pct:.2f}%)؛ فحص وضبط وحدة الجهد العالي",
             measured=drift_pct,
-            limit=f"<= {entry.value:.1f}%",
-            confirmed=entry.confirmed,
+            limit=f"<= {tolerance_pct:.2f}%",
+            confirmed=True,
         )
     return RuleResult(
         rule_id="R-NAI-01",
         verdict=Verdict.PASS,
-        message_ar=f"جهد PMT مستقر ضمن السماحية المقبولة ({abs_drift:.2f}% <= {entry.value:.1f}%)",
+        message_ar=f"جهد PMT مستقر ضمن سماحية الكاشف المعتمدة ({abs_drift:.2f}% <= {tolerance_pct:.2f}%)",
         measured=drift_pct,
-        limit=f"<= {entry.value:.1f}%",
-        confirmed=entry.confirmed,
+        limit=f"<= {tolerance_pct:.2f}%",
+        confirmed=True,
     )
 
 
 def eval_r_nai_02_resolution(
     resolution_pct: float,
+    nominal_resolution_pct: Optional[float] = None,
+    diameter_inch: float = 3.0,
+    height_inch: float = 3.0,
     thresholds: Optional[SystemThresholds] = None,
 ) -> RuleResult:
-    """R-NAI-02: الدقة الطاقية (%R) عند قمة السيزيوم 661.5 keV لكاشف 3"x3".
+    """R-NAI-02: الدقة الطاقية (%R) عند قمة السيزيوم 661.5 keV (MRNI-504 البند 3.5.4 والقرار 15-5).
     
-    الحدود:
-    - R-NAI-02A (PASS): %R <= 7.5%
-    - R-NAI-02B (OUT_OF_SPEC): 7.5% < %R <= 9.0%
-    - R-NAI-02C (FAILURE): %R > 9.0%
-    
-    المرجع: معيار الصناعة القياسي لكواشف الوميض ([TBC]).
+    - حد الاجتياز من شهادة الكاشف (nominal_resolution_pct إن وجد).
+    - وإلا 7.5% (PASS) و9.0% الافتراضيان لبلورة 3"x3" فقط.
+    - لبلورة بأبعاد أخرى وبلا حد شهادة: نتيجة «غير محدد» محايدة (WARNING).
+    - فوق الحد الأعلى = OUT_OF_SPEC برسالة «تدهور يحتاج تشخيصاً»، وليس FAILURE تلقائياً.
+    - لا مسار يعيد FAILURE في R-NAI-02.
     """
     t = thresholds or get_default_thresholds()
-    pass_lim = t.nai_resolution_pass_pct.value
-    oos_lim = t.nai_resolution_out_of_spec_pct.value
-    limit_desc = f"pass <= {pass_lim:.1f}%, oos <= {oos_lim:.1f}%"
+    is_standard_3x3 = (abs(diameter_inch - 3.0) < 1e-4 and abs(height_inch - 3.0) < 1e-4)
+
+    if nominal_resolution_pct is not None and nominal_resolution_pct > 0:
+        pass_lim = nominal_resolution_pct
+        oos_lim = nominal_resolution_pct * 1.20
+        limit_desc = f"حد الشهادة <= {pass_lim:.2f}%"
+        source_note = "حسب شهادة الكاشف"
+    elif is_standard_3x3:
+        pass_lim = t.nai_resolution_pass_pct.value
+        oos_lim = t.nai_resolution_out_of_spec_pct.value
+        limit_desc = f"pass <= {pass_lim:.1f}%, oos <= {oos_lim:.1f}%"
+        source_note = "معياري لبلورة 3″×3″"
+    else:
+        return RuleResult(
+            rule_id="R-NAI-02",
+            verdict=Verdict.WARNING,
+            message_ar=f"أبعاد البلورة ({diameter_inch:.1f} in x {height_inch:.1f} in) تختلف عن 3x3 بوصة ولا تتوفر قيمة اسمية في شهادة الكاشف؛ النتيجة غير محددة وتتطلب مراجعة مواصفة المصنّع",
+            measured=resolution_pct,
+            limit="غير محدد لبلورات غير 3″×3″ دون شهادة",
+            confirmed=False,
+        )
 
     if resolution_pct <= pass_lim:
         return RuleResult(
             rule_id="R-NAI-02A",
             verdict=Verdict.PASS,
-            message_ar=f"الدقة الطاقية لكاشف الوميض ممتازة ومطابقة للمواصفات ({resolution_pct:.2f}% <= {pass_lim:.1f}%)",
+            message_ar=f"الدقة الطاقية لكاشف الوميض ممتازة ومطابقة للمواصفات ({resolution_pct:.2f}% <= {pass_lim:.2f}% {source_note})",
             measured=resolution_pct,
             limit=limit_desc,
             confirmed=False,
@@ -652,7 +762,7 @@ def eval_r_nai_02_resolution(
         return RuleResult(
             rule_id="R-NAI-02B",
             verdict=Verdict.OUT_OF_SPEC,
-            message_ar=f"تراجع في الدقة الطاقية ({resolution_pct:.2f}% بين {pass_lim:.1f}% و {oos_lim:.1f}%)؛ إعادة معايرة الجهد والتحقق من التوصيل البصري",
+            message_ar=f"تراجع في الدقة الطاقية ({resolution_pct:.2f}% بين {pass_lim:.2f}% و {oos_lim:.2f}% {source_note})؛ إعادة معايرة الجهد والتحقق من التوصيل البصري",
             measured=resolution_pct,
             limit=limit_desc,
             confirmed=False,
@@ -660,8 +770,8 @@ def eval_r_nai_02_resolution(
     else:
         return RuleResult(
             rule_id="R-NAI-02C",
-            verdict=Verdict.FAILURE,
-            message_ar=f"تلف في بلورة الوميض أو عطل PMT ({resolution_pct:.2f}% > {oos_lim:.1f}%)؛ تثبيت ملصق FAILURE",
+            verdict=Verdict.OUT_OF_SPEC,
+            message_ar=f"دقة الطاقة خارج المواصفات ({resolution_pct:.2f}% > {oos_lim:.2f}% {source_note})؛ تدهور يحتاج تشخيصاً في بلورة الوميض أو الأنبوب الضوئي",
             measured=resolution_pct,
             limit=limit_desc,
             confirmed=False,
@@ -669,38 +779,53 @@ def eval_r_nai_02_resolution(
 
 
 def eval_r_nai_03_gain_drift(
-    centroid_drift_channels: float,
+    drift_pct: float,
     duration_hours: float = 2.0,
     thresholds: Optional[SystemThresholds] = None,
 ) -> RuleResult:
     """R-NAI-03: استقرار الكسب الطيفي والانجراف (Gain Drift).
     
-    الشرط: تحرك موضع قمة السيزيوم بأكثر من قناتين خلال ساعتين قياس.
-    الحكم: OUT_OF_SPEC
-    المرجع: معايير الاستقرار لمطيافية NaI ([TBC]).
+    النسبة المئوية من طاقة قمة السيزيوم (Cs-137 661.5 keV) وفق القرارين 15-6 و16.
+    الحد المعياري <= 1.0% خلال ساعتين (confirmed=True وفق القرار 16).
+    إذا كانت مدة القياس أقل من ساعتين: مراقبة غير كافية (WAIT).
+    إذا تجاوز الانجراف 1.0%: OUT_OF_SPEC.
+    المرجع: معايير استقرار مطيافية NaI وتأكيد المهندس (القرار 16).
     """
     t = thresholds or get_default_thresholds()
-    max_drift = t.nai_gain_drift_max_channels.value
-    max_time = t.nai_gain_drift_time_hours.value
-    abs_drift = abs(centroid_drift_channels)
+    entry_drift = t.nai_gain_drift_max_pct
+    entry_time = t.nai_gain_drift_time_hours
+    max_drift_pct = entry_drift.value
+    min_time_hours = entry_time.value
+    abs_drift = abs(drift_pct)
+    is_confirmed = entry_drift.confirmed and entry_time.confirmed
 
-    if abs_drift > max_drift and duration_hours <= max_time:
+    if duration_hours < min_time_hours:
+        return RuleResult(
+            rule_id="R-NAI-03",
+            verdict=Verdict.WAIT,
+            message_ar=f"مراقبة غير كافية: مدة قياس استقرار الكسب ({duration_hours:.2f} h) أقل من المدة المعيارية ({min_time_hours:.1f} h)؛ يلزم استكمال القياس ساعتين على الأقل",
+            measured={"drift_pct": drift_pct, "duration_hours": duration_hours},
+            limit=f"<= {max_drift_pct:.1f}% in >= {min_time_hours:.1f} h",
+            confirmed=is_confirmed,
+        )
+
+    if abs_drift > max_drift_pct:
         return RuleResult(
             rule_id="R-NAI-03",
             verdict=Verdict.OUT_OF_SPEC,
-            message_ar=f"تحرك موضع قمة السيزيوم ({abs_drift:.2f} channels) بأكثر من {max_drift:.1f} قنوات خلال {duration_hours:.1f} ساعات؛ فحص التثبيت الحراري واستقرار قاعدة الأنبوب الضوئي",
-            measured={"drift_channels": centroid_drift_channels, "duration_hours": duration_hours},
-            limit=f"<= {max_drift:.1f} channels in {max_time:.1f} h",
-            confirmed=False,
+            message_ar=f"انجراف طاقة قمة السيزيوم ({abs_drift:.2f}%) يتجاوز الحد المسموح ({max_drift_pct:.1f}%) خلال {duration_hours:.1f} ساعات؛ فحص التثبيت الحراري واستقرار قاعدة الأنبوب الضوئي",
+            measured={"drift_pct": drift_pct, "duration_hours": duration_hours},
+            limit=f"<= {max_drift_pct:.1f}% in {min_time_hours:.1f} h",
+            confirmed=is_confirmed,
         )
 
     return RuleResult(
         rule_id="R-NAI-03",
         verdict=Verdict.PASS,
-        message_ar=f"استقرار الكسب الطيفي ممتاز (الانجراف {abs_drift:.2f} <= {max_drift:.1f} channels)",
-        measured={"drift_channels": centroid_drift_channels, "duration_hours": duration_hours},
-        limit=f"<= {max_drift:.1f} channels in {max_time:.1f} h",
-        confirmed=False,
+        message_ar=f"استقرار الكسب الطيفي ممتاز (الانجراف {abs_drift:.2f}% <= {max_drift_pct:.1f}% خلال {duration_hours:.1f} h)",
+        measured={"drift_pct": drift_pct, "duration_hours": duration_hours},
+        limit=f"<= {max_drift_pct:.1f}% in {min_time_hours:.1f} h",
+        confirmed=is_confirmed,
     )
 
 

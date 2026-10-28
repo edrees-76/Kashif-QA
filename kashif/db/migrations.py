@@ -324,12 +324,93 @@ def migration_004_multi_isotope_sources(conn: sqlite3.Connection) -> None:
     cursor.close()
 
 
+def migration_005_hpge_pn_and_detector_specs(conn: sqlite3.Connection) -> None:
+    """Migration 005: Add semiconductor type (P/N), certified polarity, ramp limits to detectors table.
+    
+    Implements Decisions 14 & 15-3:
+    - semiconductor_type (P_TYPE, N_TYPE, UNSPECIFIED)
+    - certified_polarity (POSITIVE, NEGATIVE)
+    - certificate_ref
+    - cooling_hours_cert
+    - hv_ramp_max_v_per_s (default 10.0)
+    - hv_ramp_reference
+    - pmt_voltage_tolerance_pct for NaI
+    Existing detectors retain NULL / UNSPECIFIED crystal type without data loss.
+    """
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(detectors);")
+    cols = {row["name"] for row in cursor.fetchall()}
+
+    if "semiconductor_type" not in cols:
+        cursor.execute("ALTER TABLE detectors ADD COLUMN semiconductor_type TEXT CHECK(semiconductor_type IN ('P_TYPE', 'N_TYPE', 'UNSPECIFIED'));")
+        cursor.execute("UPDATE detectors SET semiconductor_type = 'UNSPECIFIED' WHERE detector_type = 'HPGE' AND (semiconductor_type IS NULL OR semiconductor_type = '');")
+    if "certified_polarity" not in cols:
+        cursor.execute("ALTER TABLE detectors ADD COLUMN certified_polarity TEXT CHECK(certified_polarity IN ('POSITIVE', 'NEGATIVE'));")
+    if "certificate_ref" not in cols:
+        cursor.execute("ALTER TABLE detectors ADD COLUMN certificate_ref TEXT;")
+    if "cooling_hours_cert" not in cols:
+        cursor.execute("ALTER TABLE detectors ADD COLUMN cooling_hours_cert REAL;")
+    if "hv_ramp_max_v_per_s" not in cols:
+        cursor.execute("ALTER TABLE detectors ADD COLUMN hv_ramp_max_v_per_s REAL NOT NULL DEFAULT 10.0;")
+    if "hv_ramp_reference" not in cols:
+        cursor.execute("ALTER TABLE detectors ADD COLUMN hv_ramp_reference TEXT;")
+    if "pmt_voltage_tolerance_pct" not in cols:
+        cursor.execute("ALTER TABLE detectors ADD COLUMN pmt_voltage_tolerance_pct REAL;")
+
+    cursor.close()
+
+
+def migration_006_nuclides_uncertainty_and_zn65_ddep(conn: sqlite3.Connection) -> None:
+    """Migration 006: Add uncertainty and reference URL fields, and apply verified Zn-65 DDEP data.
+    
+    Implements Decision 15-8:
+    - half_life_uncertainty (same unit as half_life_value)
+    - reference_url
+    - reference_accessed
+    - Zn-65 corrected to 244.01 (9) d from official LNHB evaluation (2026-10-27)
+    - Recalculates half_life_days using half_life_to_days
+    - Modifies non-custom nuclides only (is_custom=0)
+    - Leaves custom nuclides and Becquerel source activities completely untouched
+    """
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(nuclides);")
+    cols = {row["name"] for row in cursor.fetchall()}
+
+    if "half_life_uncertainty" not in cols:
+        cursor.execute("ALTER TABLE nuclides ADD COLUMN half_life_uncertainty REAL;")
+    if "reference_url" not in cols:
+        cursor.execute("ALTER TABLE nuclides ADD COLUMN reference_url TEXT;")
+    if "reference_accessed" not in cols:
+        cursor.execute("ALTER TABLE nuclides ADD COLUMN reference_accessed TEXT;")
+
+    # Populate verified Zn-65 from LNHB/DDEP (Decision 15-8, verified 2026-10-27)
+    now_str = datetime.now(timezone.utc).isoformat()
+    zn65_days = half_life_to_days(244.01, "d")
+    cursor.execute("""
+    UPDATE nuclides
+    SET half_life_value = 244.01,
+        half_life_unit = 'd',
+        half_life_days = ?,
+        half_life_uncertainty = 0.09,
+        confirmed = 1,
+        reference = 'LNHB / CEA - Table de Radionucléides (Zn-65)',
+        reference_url = 'http://www.lnhb.fr/nuclides/Zn-65_tables.pdf',
+        reference_accessed = '2026-10-27',
+        updated_at = ?
+    WHERE code = 'Zn-65' AND is_custom = 0;
+    """, (zn65_days, now_str))
+
+    cursor.close()
+
+
 # Registry of migrations: version -> (description, migration_function)
 MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     1: ("Initial schema: users, audit_log with hash-chaining triggers, system_settings", migration_001_initial_core_security),
     2: ("Add account lockout and session tracking fields to users table", migration_002_user_lockout_and_session),
     3: ("Technical registries: detectors, instruments, sources with composite uniqueness", migration_003_registries_detectors_instruments_sources),
     4: ("Nuclides reference registry and multi-isotope radioactive source architecture", migration_004_multi_isotope_sources),
+    5: ("HPGe crystal semiconductor type (P/N), certified polarity, ramp limits, and NaI specs", migration_005_hpge_pn_and_detector_specs),
+    6: ("Nuclide uncertainties, DDEP references, and Zn-65 verified half-life correction", migration_006_nuclides_uncertainty_and_zn65_ddep),
 }
 
 

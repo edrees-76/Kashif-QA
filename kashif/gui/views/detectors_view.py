@@ -40,6 +40,7 @@ from kashif.core.models import (
     HPGeDetector,
     NaIDetector,
     PreampType,
+    SemiconductorType,
     VoltagePolarity,
     WindowStatus,
     WindowType,
@@ -49,7 +50,7 @@ from kashif.db.repositories import (
     DuplicateEntityError,
     EntityNotFoundError,
 )
-from kashif.gui.bidi import format_mixed_text
+from kashif.gui.bidi import format_mixed_text, isolate_ltr
 from kashif.gui.theme import get_stylesheet
 from kashif.services.session import Session
 
@@ -116,8 +117,8 @@ class AddEditDetectorDialog(QDialog):
         type_layout = QVBoxLayout(type_group)
         type_layout.setSpacing(8)
 
-        self.radio_hpge = QRadioButton("كاشف الجرمانيوم عالي النقاء (\u2068Coaxial HPGe\u2069)")
-        self.radio_nai = QRadioButton("كاشف يوديد الصوديوم الوميضي (\u2068NaI(Tl)\u2069)")
+        self.radio_hpge = QRadioButton(f"كاشف الجرمانيوم عالي النقاء {isolate_ltr('(Coaxial HPGe)')}")
+        self.radio_nai = QRadioButton(f"كاشف يوديد الصوديوم الوميضي {isolate_ltr('(NaI(Tl))')}")
         self.radio_hpge.setChecked(True)
 
         self.radio_hpge.toggled.connect(self._on_type_changed)
@@ -153,6 +154,29 @@ class AddEditDetectorDialog(QDialog):
         self.combo_crystal.addItem("محوري (Coaxial)", CrystalType.COAXIAL.value)
         # Planar is intentionally not added for v1.0
 
+        self.combo_semiconductor = QComboBox()
+        self.combo_semiconductor.addItem("— اختر نوع شبه الموصل (*) —", "")
+        self.combo_semiconductor.addItem(f"شبه موصل موجب ({isolate_ltr('P-Type')})", SemiconductorType.P_TYPE.value)
+        self.combo_semiconductor.addItem(f"شبه موصل سالب ({isolate_ltr('N-Type')})", SemiconductorType.N_TYPE.value)
+
+        self.combo_cert_polarity = QComboBox()
+        self.combo_cert_polarity.addItem("— غير موثقة بالشهادة —", "")
+        self.combo_cert_polarity.addItem(f"موجبة (+) ({isolate_ltr('Positive')})", VoltagePolarity.POSITIVE.value)
+        self.combo_cert_polarity.addItem(f"سالبة (-) ({isolate_ltr('Negative')})", VoltagePolarity.NEGATIVE.value)
+
+        self.edit_cert_ref = QLineEdit()
+        self.edit_cert_ref.setPlaceholderText("رقم أو اسم شهادة المصنّع...")
+
+        self.edit_cooling_hours = QLineEdit()
+        self.edit_cooling_hours.setPlaceholderText("ساعات التبريد من الشهادة (الافتراضي 6.0)")
+
+        self.edit_hv_ramp = QLineEdit()
+        self.edit_hv_ramp.setText("10.0")
+        self.edit_hv_ramp.setPlaceholderText("الحد الأقصى لمعدل رفع الجهد (V/s) - الافتراضي 10.0")
+
+        self.edit_hv_ramp_ref = QLineEdit()
+        self.edit_hv_ramp_ref.setPlaceholderText("مرجع دليل المصنّع (إلزامي إذا اختلف المعدل عن 10.0 V/s)")
+
         self.combo_window_type = QComboBox()
         for wt in WindowType:
             self.combo_window_type.addItem(wt.value, wt.value)
@@ -187,11 +211,17 @@ class AddEditDetectorDialog(QDialog):
         self.edit_hpge_height.setPlaceholderText("الطول بالبوصة (مثال: 2.0)")
 
         form_hpge.addRow("نوع البلورة:", self.combo_crystal)
+        form_hpge.addRow("نوع شبه الموصل (*):", self.combo_semiconductor)
+        form_hpge.addRow("قطبية الشهادة المعتمدة:", self.combo_cert_polarity)
+        form_hpge.addRow("مرجع شهادة المصنّع:", self.edit_cert_ref)
+        form_hpge.addRow("زمن التبريد الأدنى (ساعة):", self.edit_cooling_hours)
+        form_hpge.addRow("أقصى معدل رفع جهد (V/s):", self.edit_hv_ramp)
+        form_hpge.addRow("مرجع معدل رفع الجهد:", self.edit_hv_ramp_ref)
         form_hpge.addRow("نوع النافذة:", self.combo_window_type)
         form_hpge.addRow("حالة نافذة البريليوم:", self.combo_window_status)
         form_hpge.addRow("نوع المضخم الأولي:", self.combo_preamp)
         form_hpge.addRow("جهد التشغيل الاسمي (V) (*):", self.edit_voltage)
-        form_hpge.addRow("قطبية الجهد العالي:", self.combo_polarity)
+        form_hpge.addRow("قطبية الجهد الاسمي:", self.combo_polarity)
         form_hpge.addRow("FWHM الاسمي (keV):", self.edit_fwhm)
         form_hpge.addRow("الكفاءة النسبية الاسمية (%):", self.edit_eff)
         form_hpge.addRow("قطر البلورة (بوصة):", self.edit_hpge_diam)
@@ -276,6 +306,33 @@ class AddEditDetectorDialog(QDialog):
         self.radio_nai.setEnabled(False)
 
         if is_hpge:
+            sem = data.get("semiconductor_type")
+            if sem in (None, "", "UNSPECIFIED", SemiconductorType.UNSPECIFIED.value):
+                if self.combo_semiconductor.findData(SemiconductorType.UNSPECIFIED.value) == -1:
+                    self.combo_semiconductor.addItem("نوع البلورة غير محدد — يلزم التعبئة", SemiconductorType.UNSPECIFIED.value)
+                idx = self.combo_semiconductor.findData(SemiconductorType.UNSPECIFIED.value)
+                self.combo_semiconductor.setCurrentIndex(idx)
+            else:
+                idx = self.combo_semiconductor.findData(sem)
+                if idx >= 0:
+                    self.combo_semiconductor.setCurrentIndex(idx)
+
+            cert_pol = data.get("certified_polarity")
+            idx_pol = self.combo_cert_polarity.findData(cert_pol or "")
+            if idx_pol >= 0:
+                self.combo_cert_polarity.setCurrentIndex(idx_pol)
+
+            self.edit_cert_ref.setText(data.get("certificate_ref") or "")
+            if data.get("cooling_hours_cert") is not None:
+                self.edit_cooling_hours.setText(str(data["cooling_hours_cert"]))
+
+            if data.get("hv_ramp_max_v_per_s") is not None:
+                self.edit_hv_ramp.setText(str(data["hv_ramp_max_v_per_s"]))
+            else:
+                self.edit_hv_ramp.setText("10.0")
+
+            self.edit_hv_ramp_ref.setText(data.get("hv_ramp_reference") or "")
+
             self.edit_voltage.setText(str(data.get("nominal_voltage") or ""))
             if data.get("nominal_fwhm_kev"):
                 self.edit_fwhm.setText(str(data["nominal_fwhm_kev"]))
@@ -318,6 +375,36 @@ class AddEditDetectorDialog(QDialog):
                     return
                 voltage = float(v_str)
 
+                sem_val = self.combo_semiconductor.currentData()
+                if not sem_val or sem_val == SemiconductorType.UNSPECIFIED.value:
+                    self.lbl_error.setText("نوع شبه الموصل (P-Type أو N-Type) إلزامي لكواشف HPGe ولا يمكن تركه غير محدد.")
+                    return
+                sem_type = SemiconductorType(sem_val)
+
+                cert_pol_val = self.combo_cert_polarity.currentData()
+                cert_pol = VoltagePolarity(cert_pol_val) if cert_pol_val else None
+                cert_ref = self.edit_cert_ref.text().strip() or None
+
+                # Non-blocking warning on incomplete documentation (allowed to save)
+                if not cert_pol or not cert_ref:
+                    _show_msg(
+                        self,
+                        "warn",
+                        "تنبيه توثيق ناقص",
+                        "تنبيه: لم يتم توثيق قطبية الشهادة أو مرجعها كاملاً لكاشف HPGe.\nيُسمح بالحفظ ولكن ستسجّل نتائج الفحص «توثيق ناقص».",
+                    )
+
+                cooling_str = self.edit_cooling_hours.text().strip()
+                cooling_hours = float(cooling_str) if cooling_str else None
+
+                ramp_str = self.edit_hv_ramp.text().strip()
+                ramp_rate = float(ramp_str) if ramp_str else 10.0
+                ramp_ref = self.edit_hv_ramp_ref.text().strip() or None
+
+                if abs(ramp_rate - 10.0) > 1e-6 and not ramp_ref:
+                    self.lbl_error.setText("مرجع دليل المصنّع لمعدل رفع الجهد إلزامي إذا اختلف المعدل عن 10.0 V/s.")
+                    return
+
                 fwhm = float(self.edit_fwhm.text().strip()) if self.edit_fwhm.text().strip() else None
                 eff = float(self.edit_eff.text().strip()) if self.edit_eff.text().strip() else None
                 diam = float(self.edit_hpge_diam.text().strip()) if self.edit_hpge_diam.text().strip() else None
@@ -329,6 +416,12 @@ class AddEditDetectorDialog(QDialog):
                     model=model,
                     serial_number=serial,
                     crystal_type=CrystalType.COAXIAL,
+                    semiconductor_type=sem_type,
+                    certified_polarity=cert_pol,
+                    certificate_ref=cert_ref,
+                    cooling_hours_cert=cooling_hours,
+                    hv_ramp_max_v_per_s=ramp_rate,
+                    hv_ramp_reference=ramp_ref,
                     window_type=WindowType(self.combo_window_type.currentData()),
                     beryllium_window_status=WindowStatus(self.combo_window_status.currentData()),
                     preamp_type=PreampType(self.combo_preamp.currentData()),
@@ -415,6 +508,27 @@ class DetectorDetailDialog(QDialog):
         form.addRow("الحالة التشغيلية:", QLabel(format_mixed_text(str(d.get("status") or "—"))))
 
         if d.get("detector_type") == "HPGE":
+            sem = d.get("semiconductor_type")
+            if sem == "P_TYPE":
+                sem_str = f"بلورة نمط موجب ({isolate_ltr('P-Type')})"
+            elif sem == "N_TYPE":
+                sem_str = f"بلورة نمط سالب ({isolate_ltr('N-Type')})"
+            else:
+                sem_str = "نوع البلورة غير محدد — يلزم التعبئة"
+            form.addRow("نوع شبه الموصل:", QLabel(format_mixed_text(sem_str)))
+
+            cert_pol = d.get("certified_polarity") or "غير موثقة"
+            cert_ref = d.get("certificate_ref") or "—"
+            form.addRow("قطبية الشهادة المعتمدة:", QLabel(format_mixed_text(f"{cert_pol} (مرجع: {cert_ref})")))
+
+            cooling_h = d.get("cooling_hours_cert")
+            cooling_txt = f"{cooling_h} ساعة (شهادة)" if cooling_h else "6.0 ساعة (افتراضي)"
+            form.addRow("زمن التبريد الأدنى:", QLabel(format_mixed_text(cooling_txt)))
+
+            ramp = d.get("hv_ramp_max_v_per_s") if d.get("hv_ramp_max_v_per_s") is not None else 10.0
+            ramp_ref = d.get("hv_ramp_reference") or "دليل عام"
+            form.addRow("أقصى معدل رفع جهد:", QLabel(format_mixed_text(f"{ramp} V/s (مرجع: {ramp_ref})")))
+
             form.addRow("المضخم الأولي:", QLabel(format_mixed_text(str(d.get("preamp_type") or "—"))))
             form.addRow("نافذة البريليوم:", QLabel(format_mixed_text(f"{d.get('window_type')} ({d.get('beryllium_window_status')})")))
             form.addRow("FWHM الاسمي:", QLabel(format_mixed_text(f"{d.get('nominal_fwhm_kev') or '—'} keV")))
@@ -564,7 +678,20 @@ class DetectorsView(QWidget):
         for row, rec in enumerate(records):
             self.table.setItem(row, 0, QTableWidgetItem(str(rec["id"])))
             self.table.setItem(row, 1, QTableWidgetItem(rec["code"]))
-            self.table.setItem(row, 2, QTableWidgetItem(rec["detector_type"]))
+
+            # Detector type column with crystal/semiconductor indicator
+            if rec["detector_type"] == "HPGE":
+                sem = rec.get("semiconductor_type")
+                if sem == "P_TYPE":
+                    type_str = f"HPGe ({isolate_ltr('P-Type')})"
+                elif sem == "N_TYPE":
+                    type_str = f"HPGe ({isolate_ltr('N-Type')})"
+                else:
+                    type_str = "HPGe [نوع البلورة غير محدد — يلزم التعبئة]"
+            else:
+                type_str = "NaI(Tl)"
+            self.table.setItem(row, 2, QTableWidgetItem(type_str))
+
             self.table.setItem(row, 3, QTableWidgetItem(rec["manufacturer"]))
             self.table.setItem(row, 4, QTableWidgetItem(rec["model"]))
             self.table.setItem(row, 5, QTableWidgetItem(rec["serial_number"]))

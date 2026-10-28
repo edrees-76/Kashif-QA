@@ -723,9 +723,9 @@ class MainWindow(QMainWindow):
             return
         self._is_logging_out = True
 
-        # 1. Stop idle lock timer
-        if hasattr(self, "idle_lock") and self.idle_lock and hasattr(self.idle_lock, "timer"):
-            self.idle_lock.timer.stop()
+        # 1. Stop idle lock timer and remove event filter
+        if hasattr(self, "idle_lock") and self.idle_lock:
+            self.idle_lock.stop()
 
         # 2. Close all secondary windows without save prompt
         self.close_secondary_windows()

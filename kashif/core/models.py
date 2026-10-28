@@ -20,6 +20,13 @@ from pydantic import (
 )
 
 
+class SemiconductorType(str, Enum):
+    """نوع بلورة شبه الموصل لكواشف الجرمانيوم وفق القرارين 14 و15."""
+    P_TYPE = "P_TYPE"
+    N_TYPE = "N_TYPE"
+    UNSPECIFIED = "UNSPECIFIED"
+
+
 class DetectorType(str, Enum):
     """نوع الكاشف الإشعاعي المدعوم."""
     HPGE = "HPGE"
@@ -122,14 +129,47 @@ class HPGeDetector(BaseModel):
     window_type: WindowType = Field(default=WindowType.BERYLLIUM)
     beryllium_window_status: WindowStatus = Field(default=WindowStatus.INTACT)
     preamp_type: PreampType = Field(default=PreampType.RESISTIVE)
+    semiconductor_type: SemiconductorType = Field(
+        default=SemiconductorType.UNSPECIFIED,
+        description="نوع بلورة شبه الموصل P_TYPE أو N_TYPE (إلزامي في الإنشاء والتعديل)",
+    )
     nominal_voltage: float = Field(..., gt=0.0, description="جهد التشغيل الاسمي الموجب (فولت)")
     voltage_polarity: VoltagePolarity = Field(default=VoltagePolarity.POSITIVE)
+    certified_polarity: Optional[VoltagePolarity] = Field(
+        default=None,
+        description="قطبية الجهد العالي المعتمدة في شهادة المصنّع",
+    )
+    certificate_ref: Optional[str] = Field(
+        default=None,
+        description="رقم أو مرجع شهادة المعايرة أو المصنّع",
+    )
+    cooling_hours_cert: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="زمن التبريد المحدد في شهادة الكاشف (ساعات)",
+    )
+    hv_ramp_max_v_per_s: float = Field(
+        default=10.0,
+        gt=0.0,
+        description="الحد الأقصى لمعدل رفع الجهد (V/s؛ الافتراضي 100V/10s = 10 V/s)",
+    )
+    hv_ramp_reference: Optional[str] = Field(
+        default=None,
+        description="مرجع الحد الأقصى لمعدل رفع الجهد من دليل المصنّع (إلزامي إذا اختلف عن الافتراضي)",
+    )
     nominal_fwhm_kev: Optional[float] = Field(default=None, gt=0.0, description="FWHM الاسمي عند 1332.5 keV")
     nominal_efficiency_pct: Optional[float] = Field(default=None, gt=0.0, description="الكفاءة النسبية الاسمية %")
     diameter_inch: Optional[float] = Field(default=None, gt=0.0, description="قطر البلورة (بوصة)")
     height_inch: Optional[float] = Field(default=None, gt=0.0, description="طول البلورة (بوصة)")
     facility_name: Optional[str] = Field(default=None, description="اسم المنشأة أو المعمل")
     notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_hv_ramp_reference_requirement(self) -> "HPGeDetector":
+        if abs(self.hv_ramp_max_v_per_s - 10.0) > 1e-6:
+            if not self.hv_ramp_reference or not self.hv_ramp_reference.strip():
+                raise ValueError("مرجع دليل المصنّع إلزامي عند تحديد معدل رفع جهد يختلف عن الافتراضي (10 V/s)")
+        return self
 
     @field_validator("crystal_type")
     @classmethod
@@ -165,6 +205,7 @@ class NaIDetector(BaseModel):
     height_inch: float = Field(..., gt=0.0, description="ارتفاع البلورة بالبوصة (مثال: 3.0)")
     nominal_voltage: float = Field(..., gt=0.0, description="جهد التشغيل الموصى به (فولت)")
     nominal_resolution_pct: Optional[float] = Field(default=None, gt=0.0, description="الدقة الاسمية %R")
+    pmt_voltage_tolerance_pct: Optional[float] = Field(default=None, ge=0.0, description="سماحية تذبذب جهد تشغيل PMT المسموحة (%)")
     facility_name: Optional[str] = None
     notes: Optional[str] = None
 
@@ -333,6 +374,7 @@ class NaIMeasurement(BaseModel):
     fwhm_kev: Optional[float] = Field(default=None, gt=0.0)
     peak_centroid_ch: Optional[float] = Field(default=None, ge=0.0)
     centroid_drift_channels: Optional[float] = Field(default=None)
+    centroid_drift_pct: Optional[float] = Field(default=None, description="نسبة انجراف موضع قمة Cs-137 كنسبة مئوية من الطاقة (%)")
     drift_duration_hours: Optional[float] = Field(default=None, ge=0.0)
 
 

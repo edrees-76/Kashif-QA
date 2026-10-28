@@ -16,6 +16,7 @@ from kashif.core.models import (
     Nuclide,
     PreampType,
     RadioactiveSource,
+    SemiconductorType,
     SourceIsotope,
     UserRole,
     Verdict,
@@ -78,6 +79,7 @@ from kashif.core.thresholds import (
 from kashif.core.rules import (
     RuleResult,
     aggregate_verdicts,
+    evaluate_hv_apply_gate,
     eval_r_hpge_01_window_integrity,
     eval_r_hpge_02_window_scratch,
     eval_r_hpge_03_cooling_time,
@@ -131,6 +133,7 @@ __all__ = [
     "NaIDetector",
     "Instrument",
     "RadioactiveSource",
+    "SemiconductorType",
     "SourceIsotope",
     "HPGeMeasurement",
     "NaIMeasurement",
@@ -211,6 +214,7 @@ __all__ = [
     "eval_rule_sec_02_admin_approval_prohibition",
     "eval_rule_sec_03_immutable_approved_record",
     "aggregate_verdicts",
+    "evaluate_hv_apply_gate",
     # Spectrum
     "CO60_ENERGY_1_KEV",
     "CO60_ENERGY_2_KEV",

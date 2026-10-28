@@ -95,17 +95,36 @@ def test_r_hpge_02_window_scratch(status: WindowStatus, expected_verdict: Verdic
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("hours, expected_verdict, test_id", [
-    (5.99, Verdict.WAIT, "R-HPGE-03-below-boundary-wait"),
+    (5.99, Verdict.BLOCK, "R-HPGE-03-below-boundary-block"),
     (6.00, Verdict.PASS, "R-HPGE-03-exact-boundary-pass"),
     (6.01, Verdict.PASS, "R-HPGE-03-above-boundary-pass"),
     (10.0, Verdict.PASS, "R-HPGE-03-well-above-pass"),
-    (0.0, Verdict.WAIT, "R-HPGE-03-zero-wait"),
+    (0.0, Verdict.BLOCK, "R-HPGE-03-zero-block"),
 ])
 def test_r_hpge_03_cooling_time(hours: float, expected_verdict: Verdict, test_id: str):
     res = eval_r_hpge_03_cooling_time(hours)
     assert res.rule_id == "R-HPGE-03"
     assert res.verdict == expected_verdict
     assert res.confirmed is True
+
+
+def test_r_hpge_03_cooling_time_with_cert_hours():
+    """Test R-HPGE-03 with certificate cooling limits: effective = max(6.0, cert_hours)."""
+    # 8.0h cert limit governs
+    res_block = eval_r_hpge_03_cooling_time(7.99, cooling_hours_cert=8.0)
+    assert res_block.verdict == Verdict.BLOCK
+    assert "8.0" in res_block.message_ar
+
+    res_pass = eval_r_hpge_03_cooling_time(8.00, cooling_hours_cert=8.0)
+    assert res_pass.verdict == Verdict.PASS
+
+    # 4.0h cert limit does NOT lower standard 6.0h minimum
+    res_floor = eval_r_hpge_03_cooling_time(5.99, cooling_hours_cert=4.0)
+    assert res_floor.verdict == Verdict.BLOCK
+    assert "6.0" in res_floor.message_ar
+
+    res_floor_pass = eval_r_hpge_03_cooling_time(6.00, cooling_hours_cert=4.0)
+    assert res_floor_pass.verdict == Verdict.PASS
 
 
 # ---------------------------------------------------------------------------
@@ -154,17 +173,20 @@ def test_r_hpge_05_nim_voltages_boundary(v24_pos: float, expected_verdict: Verdi
 # R-HPGE-06: قطبية الجهد العالي
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("applied, nominal, expected_verdict, test_id", [
-    (VoltagePolarity.POSITIVE, VoltagePolarity.POSITIVE, Verdict.PASS, "R-HPGE-06-pass-pos-pos"),
-    (VoltagePolarity.NEGATIVE, VoltagePolarity.NEGATIVE, Verdict.PASS, "R-HPGE-06-pass-neg-neg"),
-    (VoltagePolarity.POSITIVE, VoltagePolarity.NEGATIVE, Verdict.BLOCK, "R-HPGE-06-block-mismatch-pos-neg"),
-    (VoltagePolarity.NEGATIVE, VoltagePolarity.POSITIVE, Verdict.BLOCK, "R-HPGE-06-block-mismatch-neg-pos"),
+@pytest.mark.parametrize("applied, nominal, cert, expected_verdict, test_id", [
+    (VoltagePolarity.POSITIVE, VoltagePolarity.POSITIVE, VoltagePolarity.POSITIVE, Verdict.PASS, "R-HPGE-06-pass-pos-pos-cert"),
+    (VoltagePolarity.NEGATIVE, VoltagePolarity.NEGATIVE, VoltagePolarity.NEGATIVE, Verdict.PASS, "R-HPGE-06-pass-neg-neg-cert"),
+    (VoltagePolarity.POSITIVE, VoltagePolarity.POSITIVE, None, Verdict.WARNING, "R-HPGE-06-warn-missing-cert-pos"),
+    (VoltagePolarity.NEGATIVE, VoltagePolarity.NEGATIVE, None, Verdict.WARNING, "R-HPGE-06-warn-missing-cert-neg"),
+    (VoltagePolarity.POSITIVE, VoltagePolarity.NEGATIVE, None, Verdict.BLOCK, "R-HPGE-06-block-mismatch-pos-neg"),
+    (VoltagePolarity.NEGATIVE, VoltagePolarity.POSITIVE, None, Verdict.BLOCK, "R-HPGE-06-block-mismatch-neg-pos"),
+    (VoltagePolarity.POSITIVE, VoltagePolarity.POSITIVE, VoltagePolarity.NEGATIVE, Verdict.BLOCK, "R-HPGE-06-block-applied-vs-cert"),
 ])
-def test_r_hpge_06_hv_polarity(applied: VoltagePolarity, nominal: VoltagePolarity, expected_verdict: Verdict, test_id: str):
-    res = eval_r_hpge_06_hv_polarity(applied, nominal)
+def test_r_hpge_06_hv_polarity(applied: VoltagePolarity, nominal: VoltagePolarity, cert: Optional[VoltagePolarity], expected_verdict: Verdict, test_id: str):
+    res = eval_r_hpge_06_hv_polarity(applied, nominal, certified_polarity=cert)
     assert res.rule_id == "R-HPGE-06"
     assert res.verdict == expected_verdict
-    assert res.confirmed is True
+    assert res.confirmed is (cert is not None or expected_verdict == Verdict.BLOCK)
 
 
 # ---------------------------------------------------------------------------
@@ -335,19 +357,20 @@ def test_r_hpge_15_invalid_nominal_efficiency():
 # R-NAI-01: استقرار جهد PMT لكواشف NaI (عتبة 2.0%)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("drift, expected_verdict, test_id", [
-    (1.99, Verdict.PASS, "R-NAI-01-pos-below-pass"),
-    (2.00, Verdict.PASS, "R-NAI-01-pos-exact-boundary-pass"),
-    (2.01, Verdict.OUT_OF_SPEC, "R-NAI-01-pos-above-oos"),
-    (-1.99, Verdict.PASS, "R-NAI-01-neg-below-pass"),
-    (-2.00, Verdict.PASS, "R-NAI-01-neg-exact-boundary-pass"),
-    (-2.01, Verdict.OUT_OF_SPEC, "R-NAI-01-neg-above-oos"),
+@pytest.mark.parametrize("drift, tol, expected_verdict, test_id", [
+    (1.99, 2.0, Verdict.PASS, "R-NAI-01-pos-below-pass"),
+    (2.00, 2.0, Verdict.PASS, "R-NAI-01-pos-exact-boundary-pass"),
+    (2.01, 2.0, Verdict.OUT_OF_SPEC, "R-NAI-01-pos-above-oos"),
+    (-1.99, 2.0, Verdict.PASS, "R-NAI-01-neg-below-pass"),
+    (-2.00, 2.0, Verdict.PASS, "R-NAI-01-neg-exact-boundary-pass"),
+    (-2.01, 2.0, Verdict.OUT_OF_SPEC, "R-NAI-01-neg-above-oos"),
+    (1.5, None, Verdict.WARNING, "R-NAI-01-missing-tolerance-undefined"),
 ])
-def test_r_nai_01_pmt_voltage(drift: float, expected_verdict: Verdict, test_id: str):
-    res = eval_r_nai_01_pmt_voltage(drift)
+def test_r_nai_01_pmt_voltage(drift: float, tol: Optional[float], expected_verdict: Verdict, test_id: str):
+    res = eval_r_nai_01_pmt_voltage(drift, tolerance_pct=tol)
     assert res.rule_id == "R-NAI-01"
     assert res.verdict == expected_verdict
-    assert res.confirmed is False  # [TBC]
+    assert res.confirmed is (tol is not None)
 
 
 # ---------------------------------------------------------------------------
@@ -362,30 +385,51 @@ def test_r_nai_01_pmt_voltage(drift: float, expected_verdict: Verdict, test_id: 
     # عتبة 9.0%
     (8.99, "R-NAI-02B", Verdict.OUT_OF_SPEC, "R-NAI-02-oos-below-9.0"),
     (9.00, "R-NAI-02B", Verdict.OUT_OF_SPEC, "R-NAI-02-oos-exact-9.0"),
-    (9.01, "R-NAI-02C", Verdict.FAILURE, "R-NAI-02-fail-above-9.0"),
+    (9.01, "R-NAI-02C", Verdict.OUT_OF_SPEC, "R-NAI-02-oos-above-9.0"),
+    (12.0, "R-NAI-02C", Verdict.OUT_OF_SPEC, "R-NAI-02-degraded-diagnosis-oos"),
 ])
 def test_r_nai_02_resolution(res_pct: float, expected_id: str, expected_verdict: Verdict, test_id: str):
     res = eval_r_nai_02_resolution(res_pct)
     assert res.rule_id == expected_id
     assert res.verdict == expected_verdict
+    assert res.verdict != Verdict.FAILURE  # Strictly no failure per Decision 15
     assert res.confirmed is False  # [TBC]
+
+
+def test_r_nai_02_custom_dimensions_and_cert():
+    """Test R-NAI-02 handling of non-3x3 crystal dimensions and certificate limits."""
+    # Non 3x3 without certificate -> neutral WARNING
+    res_non_3x3 = eval_r_nai_02_resolution(8.0, diameter_inch=2.0, height_inch=2.0)
+    assert res_non_3x3.verdict == Verdict.WARNING
+    assert "تختلف عن 3x3 بوصة" in res_non_3x3.message_ar
+
+    # Custom certificate limit (e.g. 8.0%)
+    res_cert_pass = eval_r_nai_02_resolution(7.9, nominal_resolution_pct=8.0)
+    assert res_cert_pass.verdict == Verdict.PASS
+
+    res_cert_oos = eval_r_nai_02_resolution(8.1, nominal_resolution_pct=8.0)
+    assert res_cert_oos.verdict == Verdict.OUT_OF_SPEC
 
 
 # ---------------------------------------------------------------------------
 # R-NAI-03: انجراف قمة السيزيوم (عتبة 2.0 قنوات خلال ساعتين)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("drift_ch, time_h, expected_verdict, test_id", [
-    (1.99, 2.0, Verdict.PASS, "R-NAI-03-below-boundary-pass"),
-    (2.00, 2.0, Verdict.PASS, "R-NAI-03-exact-boundary-pass"),
-    (2.01, 2.0, Verdict.OUT_OF_SPEC, "R-NAI-03-above-boundary-oos"),
-    (3.00, 5.0, Verdict.PASS, "R-NAI-03-drift-after-allowed-time-pass"),
+@pytest.mark.parametrize("drift_pct, time_h, expected_verdict, test_id", [
+    (0.99, 2.0, Verdict.PASS, "R-NAI-03-below-boundary-pass"),
+    (1.00, 2.0, Verdict.PASS, "R-NAI-03-exact-boundary-pass"),
+    (1.01, 2.0, Verdict.OUT_OF_SPEC, "R-NAI-03-above-boundary-oos"),
+    (-1.01, 2.0, Verdict.OUT_OF_SPEC, "R-NAI-03-neg-above-boundary-oos"),
+    (0.5, 1.5, Verdict.WAIT, "R-NAI-03-short-duration-wait"),
+    (1.5, 1.5, Verdict.WAIT, "R-NAI-03-short-duration-wait-even-with-drift"),
+    (0.5, 3.0, Verdict.PASS, "R-NAI-03-long-duration-stable-pass"),
+    (1.2, 3.0, Verdict.OUT_OF_SPEC, "R-NAI-03-long-duration-drift-oos"),
 ])
-def test_r_nai_03_gain_drift(drift_ch: float, time_h: float, expected_verdict: Verdict, test_id: str):
-    res = eval_r_nai_03_gain_drift(centroid_drift_channels=drift_ch, duration_hours=time_h)
+def test_r_nai_03_gain_drift(drift_pct: float, time_h: float, expected_verdict: Verdict, test_id: str):
+    res = eval_r_nai_03_gain_drift(drift_pct=drift_pct, duration_hours=time_h)
     assert res.rule_id == "R-NAI-03"
     assert res.verdict == expected_verdict
-    assert res.confirmed is False  # [TBC]
+    assert res.confirmed is True  # Decision 16: confirmed by engineer
 
 
 # ---------------------------------------------------------------------------
@@ -614,4 +658,155 @@ def test_system_thresholds_json_loading_and_edge_cases():
     # تحميل من نص JSON ليس كائناً
     with pytest.raises(ValueError):
         load_thresholds_from_json('"just a string"')
+
+# ---------------------------------------------------------------------------
+# HV Apply Gate (evaluate_hv_apply_gate) Tests
+# ---------------------------------------------------------------------------
+
+def test_evaluate_hv_apply_gate_all_pass():
+    """Test evaluate_hv_apply_gate when all conditions are fully met."""
+    from kashif.core.models import HPGeDetector, SemiconductorType, VoltagePolarity
+    from kashif.core.rules import evaluate_hv_apply_gate
+
+    detector = HPGeDetector(
+        code="HPGE-GATE-1",
+        manufacturer="Canberra",
+        model="GC2018",
+        serial_number="SN-GATE-1",
+        semiconductor_type=SemiconductorType.P_TYPE,
+        certified_polarity=VoltagePolarity.POSITIVE,
+        certificate_ref="CERT-2024-01",
+        cooling_hours_cert=6.0,
+        hv_ramp_max_v_per_s=10.0,
+        nominal_voltage=3000.0,
+        voltage_polarity=VoltagePolarity.POSITIVE,
+    )
+
+    verdict, results = evaluate_hv_apply_gate(
+        detector=detector,
+        applied_polarity=VoltagePolarity.POSITIVE,
+        cooling_hours=6.5,
+        ramp_rate_v_per_s=8.0,
+    )
+    assert verdict == Verdict.PASS
+    assert len(results) == 3
+    assert all(r.verdict == Verdict.PASS for r in results)
+
+
+def test_evaluate_hv_apply_gate_blocks_on_polarity_mismatch():
+    """Test evaluate_hv_apply_gate BLOCK on polarity violation."""
+    from kashif.core.models import HPGeDetector, SemiconductorType, VoltagePolarity
+    from kashif.core.rules import evaluate_hv_apply_gate
+
+    detector = HPGeDetector(
+        code="HPGE-GATE-2",
+        manufacturer="Canberra",
+        model="GC2018",
+        serial_number="SN-GATE-2",
+        semiconductor_type=SemiconductorType.P_TYPE,
+        certified_polarity=VoltagePolarity.POSITIVE,
+        certificate_ref="CERT-2024-02",
+        cooling_hours_cert=6.0,
+        hv_ramp_max_v_per_s=10.0,
+        nominal_voltage=3000.0,
+        voltage_polarity=VoltagePolarity.POSITIVE,
+    )
+
+    verdict, results = evaluate_hv_apply_gate(
+        detector=detector,
+        applied_polarity=VoltagePolarity.NEGATIVE,
+        cooling_hours=7.0,
+        ramp_rate_v_per_s=5.0,
+    )
+    assert verdict == Verdict.BLOCK
+    pol_res = [r for r in results if r.rule_id == "R-HPGE-06"][0]
+    assert pol_res.verdict == Verdict.BLOCK
+
+
+def test_evaluate_hv_apply_gate_blocks_on_insufficient_cooling():
+    """Test evaluate_hv_apply_gate BLOCK on insufficient cooling."""
+    from kashif.core.models import HPGeDetector, SemiconductorType, VoltagePolarity
+    from kashif.core.rules import evaluate_hv_apply_gate
+
+    detector = HPGeDetector(
+        code="HPGE-GATE-3",
+        manufacturer="Ortec",
+        model="GEM",
+        serial_number="SN-GATE-3",
+        semiconductor_type=SemiconductorType.N_TYPE,
+        certified_polarity=VoltagePolarity.NEGATIVE,
+        certificate_ref="CERT-2024-03",
+        cooling_hours_cert=8.0,  # 8 hours required by cert
+        hv_ramp_max_v_per_s=10.0,
+        nominal_voltage=2500.0,
+        voltage_polarity=VoltagePolarity.NEGATIVE,
+    )
+
+    verdict, results = evaluate_hv_apply_gate(
+        detector=detector,
+        applied_polarity=VoltagePolarity.NEGATIVE,
+        cooling_hours=7.5,  # < 8.0h
+        ramp_rate_v_per_s=5.0,
+    )
+    assert verdict == Verdict.BLOCK
+    cooling_res = [r for r in results if r.rule_id == "R-HPGE-03"][0]
+    assert cooling_res.verdict == Verdict.BLOCK
+
+
+def test_evaluate_hv_apply_gate_blocks_on_ramp_exceeded():
+    """Test evaluate_hv_apply_gate BLOCK on ramp rate limit violation."""
+    from kashif.core.models import HPGeDetector, SemiconductorType, VoltagePolarity
+    from kashif.core.rules import evaluate_hv_apply_gate
+
+    detector = HPGeDetector(
+        code="HPGE-GATE-4",
+        manufacturer="Ortec",
+        model="GEM",
+        serial_number="SN-GATE-4",
+        semiconductor_type=SemiconductorType.P_TYPE,
+        certified_polarity=VoltagePolarity.POSITIVE,
+        certificate_ref="CERT-2024-04",
+        cooling_hours_cert=6.0,
+        hv_ramp_max_v_per_s=5.0,  # Strict 5 V/s
+        hv_ramp_reference="Manual section 4.1",
+        nominal_voltage=3000.0,
+        voltage_polarity=VoltagePolarity.POSITIVE,
+    )
+
+    verdict, results = evaluate_hv_apply_gate(
+        detector=detector,
+        applied_polarity=VoltagePolarity.POSITIVE,
+        cooling_hours=6.5,
+        ramp_rate_v_per_s=5.5,  # Exceeds 5.0 V/s
+    )
+    assert verdict == Verdict.BLOCK
+    ramp_res = [r for r in results if r.rule_id == "R-HPGE-07"][0]
+    assert ramp_res.verdict == Verdict.BLOCK
+
+
+def test_evaluate_hv_apply_gate_warning_on_incomplete_cert():
+    """Test evaluate_hv_apply_gate returns WARNING when certificate is incomplete but nominal matches."""
+    from kashif.core.models import HPGeDetector, SemiconductorType, VoltagePolarity
+    from kashif.core.rules import evaluate_hv_apply_gate
+
+    detector = HPGeDetector(
+        code="HPGE-GATE-5",
+        manufacturer="Canberra",
+        model="GC2018",
+        serial_number="SN-GATE-5",
+        semiconductor_type=SemiconductorType.P_TYPE,
+        certified_polarity=None,  # Missing cert polarity
+        nominal_voltage=3000.0,
+        voltage_polarity=VoltagePolarity.POSITIVE,
+    )
+
+    verdict, results = evaluate_hv_apply_gate(
+        detector=detector,
+        applied_polarity=VoltagePolarity.POSITIVE,
+        cooling_hours=6.5,
+        ramp_rate_v_per_s=5.0,
+    )
+    assert verdict == Verdict.WARNING
+    pol_res = [r for r in results if r.rule_id == "R-HPGE-06"][0]
+    assert pol_res.verdict == Verdict.WARNING
 
