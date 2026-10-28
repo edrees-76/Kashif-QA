@@ -239,18 +239,6 @@ QTableWidget QDateEdit:focus {{
     border: 2px solid {COLORS["teal"]};
 }}
 
-QTableWidget QDateEdit {{
-    background-color: #071224;
-    color: {COLORS["dark_ink"]};
-    border: 1px solid {COLORS["dark_line"]};
-    border-radius: 6px;
-    padding: 4px 8px;
-    font-size: 13px;
-}}
-
-QTableWidget QDateEdit:focus {{
-    border: 2px solid {COLORS["dark_teal"]};
-}}
 
 QTableWidget {{
     background-color: #FFFFFF;
@@ -776,6 +764,19 @@ QComboBox QAbstractItemView {{
     color: {COLORS["dark_ink"]};
     selection-background-color: {COLORS["dark_card"]};
     selection-color: {COLORS["dark_teal"]};
+}}
+
+QTableWidget QDateEdit {{
+    background-color: #071224;
+    color: {COLORS["dark_ink"]};
+    border: 1px solid {COLORS["dark_line"]};
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+}}
+
+QTableWidget QDateEdit:focus {{
+    border: 2px solid {COLORS["dark_teal"]};
 }}
 
 QTableWidget {{

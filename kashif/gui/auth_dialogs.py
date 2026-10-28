@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from kashif.gui.bidi import format_mixed_text
+from kashif.gui.dialog_utils import enable_dialog_window_controls
 from kashif.gui.theme import COLORS, get_stylesheet, logo_file
 from kashif.services.security import (
     AuthenticationError,
@@ -51,6 +52,7 @@ class FirstAdminDialog(QDialog):
         self.setMinimumWidth(480)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
 
         self._init_ui()
 
@@ -160,6 +162,7 @@ class MasterRecoveryKeyDialog(QDialog):
         self.setModal(True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet(get_stylesheet())
+        enable_dialog_window_controls(self)
 
         self._init_ui()
 
