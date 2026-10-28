@@ -1065,7 +1065,7 @@ def test_nuclide_repository_extended_coverage(db_conn, manager_session):
     # 5. List filtering
     confirmed_nuclides = n_repo.list_all(confirmed_only=True)
     assert all(n["confirmed"] == 1 for n in confirmed_nuclides)
-    assert len(confirmed_nuclides) == 3  # Co-60, Cs-137, and Zn-65 (verified via Migration 006)
+    assert len(confirmed_nuclides) == 12  # All 12 standard radionuclides are confirmed (Migration 007)
 
     all_nuclides = n_repo.list_all()
     assert any(n["code"] == "In-111" and n["is_custom"] == 1 for n in all_nuclides)
