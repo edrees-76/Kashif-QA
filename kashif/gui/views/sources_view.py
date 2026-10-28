@@ -165,7 +165,9 @@ class NuclideDetailCardDialog(QDialog):
             unc_display = "غير مسجّل"
         form.addRow("عدم اليقين في عمر النصف:", QLabel(unc_display))
 
-        form.addRow("المصدر المرجعي المعتمد:", QLabel(format_mixed_text(str(d.get("reference") or "—"))))
+        self.lbl_reference = QLabel(format_mixed_text(str(d.get("reference") or "—")))
+        self.lbl_reference.setWordWrap(True)
+        form.addRow("المصدر المرجعي المعتمد:", self.lbl_reference)
 
         ref_url = d.get("reference_url")
         lbl_url = QLabel(isolate_ltr(str(ref_url)) if ref_url else "—")
@@ -903,9 +905,10 @@ class SourceDetailDialog(QDialog):
             "الفعالية بالشهادة",
             "تاريخ الشهادة",
             "الفعالية اللحظية",
-            "تقييم R-SRC-01",
+            f"تقييم {isolate_ltr('R-SRC-01')}",
         ])
         self.tbl_calc.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tbl_calc.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl_calc.verticalHeader().setVisible(False)
         self.tbl_calc.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.tbl_calc.doubleClicked.connect(self._on_isotope_double_clicked)
@@ -1003,7 +1006,7 @@ class SourceDetailDialog(QDialog):
                             badge_widget.setText("⚠️ خارج النطاق")
                             badge_widget.setProperty("class", "badge-warning")
                     else:
-                        badge_widget.setText("غير مشمول بقاعدة R-SRC-01")
+                        badge_widget.setText(f"غير مشمول بقاعدة {isolate_ltr('R-SRC-01')}")
                         badge_widget.setProperty("class", "badge-neutral")
                 else:
                     act_now_str = "يسبق الشهادة"
@@ -1124,7 +1127,7 @@ class SourcesView(QWidget):
             "الفعالية المعتمدة",
             "تاريخ الشهادة",
             "الفعالية اللحظية",
-            "تقييم R-SRC-01",
+            f"تقييم {isolate_ltr('R-SRC-01')}",
             "المنشأة",
         ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -1275,7 +1278,7 @@ class SourcesView(QWidget):
                 badge_widget.setText("⚠️ بيانات غير صالحة")
                 badge_widget.setProperty("class", "badge-expired")
             elif not has_co60_or_cs137:
-                badge_widget.setText("غير مشمول بقاعدة R-SRC-01")
+                badge_widget.setText(f"غير مشمول بقاعدة {isolate_ltr('R-SRC-01')}")
                 badge_widget.setProperty("class", "badge-neutral")
             elif any_out_of_spec:
                 badge_widget.setText("⚠️ خارج النطاق")

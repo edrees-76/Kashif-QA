@@ -1,8 +1,8 @@
 """Dialog utilities and responsive helpers for KASHIF-QA GUI."""
 
 from typing import Optional
-from PyQt6.QtCore import Qt, QPoint, QObject, QEvent, QTimer, QRect
-from PyQt6.QtWidgets import QDialog, QDateEdit, QApplication, QScrollArea, QFrame, QPushButton
+from PyQt6.QtCore import Qt, QPoint, QObject, QEvent, QTimer, QRect, QSize
+from PyQt6.QtWidgets import QDialog, QDateEdit, QApplication, QScrollArea, QFrame, QPushButton, QWidget
 
 
 def enable_dialog_window_controls(
@@ -29,6 +29,19 @@ def enable_dialog_window_controls(
     dialog.setWindowFlags(flags)
 
 
+class ResponsiveButtonContainer(QWidget):
+    """Container widget that constrains button rows to max_content_width and centers them."""
+
+    def __init__(self, target_width: int = 1000, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.target_width = target_width
+        self.setMaximumWidth(target_width)
+
+    def sizeHint(self) -> QSize:
+        h = super().sizeHint().height()
+        return QSize(self.target_width, h if h > 0 else 36)
+
+
 def constrain_dialog_content_width(dialog: QDialog, max_content_width: int = 1000) -> None:
     """Constrain dialog content/form width and center it so fields do not stretch excessively on large screens.
     
@@ -48,6 +61,37 @@ def constrain_dialog_content_width(dialog: QDialog, max_content_width: int = 100
                 frame.setMaximumWidth(max_content_width)
                 if dialog.layout():
                     dialog.layout().setAlignment(frame, Qt.AlignmentFlag.AlignHCenter)
+
+    d_layout = dialog.layout()
+    if d_layout:
+        for i in range(d_layout.count()):
+            item = d_layout.itemAt(i)
+            if not item:
+                continue
+
+            w = item.widget()
+            if isinstance(w, ResponsiveButtonContainer):
+                w.target_width = max_content_width
+                w.setMaximumWidth(max_content_width)
+                d_layout.setAlignment(w, Qt.AlignmentFlag.AlignHCenter)
+                continue
+
+            child_l = item.layout()
+            if not child_l:
+                continue
+
+            # Check if this child layout is a button row (e.g. Save/Cancel/Action buttons)
+            child_widgets = [
+                child_l.itemAt(j).widget()
+                for j in range(child_l.count())
+                if child_l.itemAt(j) and child_l.itemAt(j).widget()
+            ]
+            if child_widgets and all(isinstance(bw, QPushButton) for bw in child_widgets):
+                d_layout.removeItem(item)
+                container = ResponsiveButtonContainer(max_content_width, parent=dialog)
+                child_l.setContentsMargins(0, 0, 0, 0)
+                container.setLayout(child_l)
+                d_layout.insertWidget(i, container, 0, Qt.AlignmentFlag.AlignHCenter)
 
     for btn in dialog.findChildren(QPushButton):
         if btn.parent() == dialog and dialog.layout():
