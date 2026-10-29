@@ -28,6 +28,7 @@ from kashif.gui.bidi import format_mixed_text
 from kashif.gui.dialog_utils import (
     enable_dialog_window_controls,
     adjust_dialog_size_to_screen,
+    format_utc_to_local,
 )
 from kashif.gui.theme import COLORS, get_stylesheet, status_color
 from kashif.services.security import (
@@ -258,7 +259,7 @@ class UsersManagementDialog(QDialog):
             must_str = "نعم" if u["must_change_password"] else "لا"
             self.table.setItem(row_idx, 5, QTableWidgetItem(must_str))
 
-            last_login = (u["last_login_at"] or "لم يدخل بعد")[:19].replace("T", " ")
+            last_login = format_utc_to_local(u["last_login_at"])
             self.table.setItem(row_idx, 6, QTableWidgetItem(last_login))
 
     def _get_selected_user_id(self) -> Optional[Tuple[int, str, bool]]:

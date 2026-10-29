@@ -1,10 +1,16 @@
 """Dialog utilities and responsive helpers for KASHIF-QA GUI."""
 
 from typing import Optional
+from datetime import datetime, timezone
 from PyQt6.QtCore import Qt, QPoint, QObject, QEvent, QTimer, QRect, QSize
 from PyQt6.QtWidgets import (
     QDialog,
+    QComboBox,
     QDateEdit,
+    QSpinBox,
+    QDoubleSpinBox,
+    QAbstractSpinBox,
+    QAbstractScrollArea,
     QApplication,
     QScrollArea,
     QFrame,
@@ -12,6 +18,8 @@ from PyQt6.QtWidgets import (
     QWidget,
     QSizePolicy,
 )
+
+from kashif.gui.bidi import isolate_ltr
 
 
 def enable_dialog_window_controls(
@@ -179,6 +187,7 @@ def adjust_dialog_size_to_screen(
     """Adjust dialog size so it never exceeds max_ratio of the available screen geometry,
     and constrain inner content/form width so fields do not stretch across wide screens."""
     constrain_dialog_content_width(dialog, max_content_width=max_content_width)
+    install_wheel_guard_on_inputs(dialog)
 
     screen = QApplication.primaryScreen()
     if not screen:
@@ -256,3 +265,81 @@ def attach_calendar_popup_filter(date_edit: QDateEdit) -> None:
         popup.installEventFilter(filter_obj)
         # Keep a reference to prevent garbage collection
         setattr(date_edit, "_calendar_popup_filter", filter_obj)
+
+
+class WheelScrollGuardFilter(QObject):
+    """Event filter that prevents unfocused input widgets (QComboBox, QDateEdit,
+    QSpinBox, QDoubleSpinBox) from consuming wheel events and accidentally changing values.
+
+    When unfocused, the wheel event is ignored and forwarded up the widget hierarchy
+    to allow the enclosing QAbstractScrollArea (such as QScrollArea or QTableWidget) to scroll.
+    When focused, the wheel event is processed normally by the widget.
+    """
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Wheel:
+            widget = obj if isinstance(obj, QWidget) else None
+            if widget:
+                has_focus = widget.hasFocus()
+                if not has_focus:
+                    for child in widget.findChildren(QWidget):
+                        if child.hasFocus():
+                            has_focus = True
+                            break
+
+                if not has_focus:
+                    event.ignore()
+                    parent = widget.parentWidget()
+                    while parent is not None:
+                        if isinstance(parent, QAbstractScrollArea):
+                            QApplication.sendEvent(parent.viewport(), event)
+                            return True
+                        parent = parent.parentWidget()
+                    return True
+
+        return super().eventFilter(obj, event)
+
+
+GUARD_INPUT_CLASSES = (QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox, QAbstractSpinBox)
+
+
+def install_wheel_guard_on_inputs(target: QWidget) -> None:
+    """Ensure all QComboBox, QDateEdit, QSpinBox, and QDoubleSpinBox controls within
+    target (or target itself) have StrongFocus policy and ignore wheel events when unfocused."""
+    guard = getattr(target, "_wheel_scroll_guard_filter", None)
+    if guard is None:
+        guard = WheelScrollGuardFilter(target)
+        setattr(target, "_wheel_scroll_guard_filter", guard)
+
+    widgets = []
+    if isinstance(target, GUARD_INPUT_CLASSES):
+        widgets.append(target)
+    for cls in GUARD_INPUT_CLASSES:
+        widgets.extend(target.findChildren(cls))
+
+    for w in set(widgets):
+        w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        w.installEventFilter(guard)
+
+
+def format_utc_to_local(utc_str: Optional[str], default: str = "لم يدخل بعد") -> str:
+    """Format an ISO UTC datetime string into device local datetime string 'YYYY-MM-DD HH:MM'.
+
+    Preserves database representation unchanged while presenting clear local time in UI.
+    Uses isolate_ltr to enforce consistent Date-then-Time display across RTL contexts.
+    """
+    if not utc_str or not str(utc_str).strip():
+        return default
+    try:
+        s = str(utc_str).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        local_dt = dt.astimezone()
+        return isolate_ltr(local_dt.strftime("%Y-%m-%d %H:%M"))
+    except Exception:
+        cleaned = str(utc_str).replace("T", " ")[:16]
+        return isolate_ltr(cleaned) if cleaned else default
+

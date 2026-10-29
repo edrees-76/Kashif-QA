@@ -172,19 +172,19 @@ class AddEditInstrumentDialog(QDialog):
         form_specs.setSpacing(10)
 
         self.edit_ripple = QLineEdit()
-        self.edit_ripple.setPlaceholderText("التموج بالمللي فولت (mV) - لمجهز الجهد")
+        self.edit_ripple.setPlaceholderText(f"التموج بالمللي فولت ({isolate_ltr('mV')}) — لمجهز الجهد")
 
         self.edit_regulation = QLineEdit()
-        self.edit_regulation.setPlaceholderText("نسبة تنظيم الجهد %")
+        self.edit_regulation.setPlaceholderText(f"نسبة تنظيم الجهد ({isolate_ltr('%')})")
 
         self.edit_channels = QLineEdit()
-        self.edit_channels.setPlaceholderText("عدد قنوات MCA (مثال: 4096 أو 8192)")
+        self.edit_channels.setPlaceholderText(f"عدد قنوات {isolate_ltr('MCA')} (مثال: {isolate_ltr('4096')} أو {isolate_ltr('8192')})")
 
         shaping_row = QHBoxLayout()
         self.edit_shaping_min = QLineEdit()
-        self.edit_shaping_min.setPlaceholderText("الحد الأدنى (µs) مثال: 0.5")
+        self.edit_shaping_min.setPlaceholderText(f"الحد الأدنى ({isolate_ltr('µs')}) — مثال: {isolate_ltr('0.5')}")
         self.edit_shaping_max = QLineEdit()
-        self.edit_shaping_max.setPlaceholderText("الحد الأقصى (µs) مثال: 12.0")
+        self.edit_shaping_max.setPlaceholderText(f"الحد الأقصى ({isolate_ltr('µs')}) — مثال: {isolate_ltr('12.0')}")
         shaping_row.addWidget(QLabel("من:"))
         shaping_row.addWidget(self.edit_shaping_min)
         shaping_row.addWidget(QLabel("إلى:"))

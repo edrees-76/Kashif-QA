@@ -190,14 +190,14 @@ class AddEditDetectorDialog(QDialog):
         self.edit_cert_ref.setPlaceholderText("رقم أو اسم شهادة المصنّع...")
 
         self.edit_cooling_hours = QLineEdit()
-        self.edit_cooling_hours.setPlaceholderText("ساعات التبريد من الشهادة (الافتراضي 6.0)")
+        self.edit_cooling_hours.setPlaceholderText(f"ساعات التبريد من الشهادة (الافتراضي: {isolate_ltr('6.0')})")
 
         self.edit_hv_ramp = QLineEdit()
         self.edit_hv_ramp.setText("10.0")
-        self.edit_hv_ramp.setPlaceholderText("الحد الأقصى لمعدل رفع الجهد (V/s) - الافتراضي 10.0")
+        self.edit_hv_ramp.setPlaceholderText(f"الحد الأقصى لمعدل رفع الجهد ({isolate_ltr('V/s')}) — الافتراضي: {isolate_ltr('10.0')}")
 
         self.edit_hv_ramp_ref = QLineEdit()
-        self.edit_hv_ramp_ref.setPlaceholderText("مرجع دليل المصنّع (إلزامي إذا اختلف المعدل عن 10.0 V/s)")
+        self.edit_hv_ramp_ref.setPlaceholderText(f"مرجع دليل المصنّع (إلزامي إذا اختلف المعدل عن {isolate_ltr('10.0 V/s')})")
 
         self.combo_window_type = QComboBox()
         for wt in WindowType:
@@ -214,23 +214,23 @@ class AddEditDetectorDialog(QDialog):
         self.combo_preamp.addItem("أخرى (OTHER)", PreampType.OTHER.value)
 
         self.edit_voltage = QLineEdit()
-        self.edit_voltage.setPlaceholderText("مثال: 3000")
+        self.edit_voltage.setPlaceholderText(f"مثال: {isolate_ltr('3000')}")
 
         self.combo_polarity = QComboBox()
         self.combo_polarity.addItem("موجبة (+)", VoltagePolarity.POSITIVE.value)
         self.combo_polarity.addItem("سالبة (-)", VoltagePolarity.NEGATIVE.value)
 
         self.edit_fwhm = QLineEdit()
-        self.edit_fwhm.setPlaceholderText("FWHM الاسمي عند 1332.5 keV (مثال: 1.85)")
+        self.edit_fwhm.setPlaceholderText(f"قيمة {isolate_ltr('FWHM')} الاسمية عند طاقة {isolate_ltr('1332.5 keV')} (مثال: {isolate_ltr('1.85')})")
 
         self.edit_eff = QLineEdit()
-        self.edit_eff.setPlaceholderText("الكفاءة النسبية الاسمية % (مثال: 20.0)")
+        self.edit_eff.setPlaceholderText(f"الكفاءة النسبية الاسمية ({isolate_ltr('%')}) — مثال: {isolate_ltr('20.0')}")
 
         self.edit_hpge_diam = QLineEdit()
-        self.edit_hpge_diam.setPlaceholderText("القطر بالبوصة (مثال: 2.0)")
+        self.edit_hpge_diam.setPlaceholderText(f"القطر بالبوصة (مثال: {isolate_ltr('2.0')})")
 
         self.edit_hpge_height = QLineEdit()
-        self.edit_hpge_height.setPlaceholderText("الطول بالبوصة (مثال: 2.0)")
+        self.edit_hpge_height.setPlaceholderText(f"الطول بالبوصة (مثال: {isolate_ltr('2.0')})")
 
         form_hpge.addRow("نوع البلورة:", self.combo_crystal)
         form_hpge.addRow("نوع شبه الموصل (*):", self.combo_semiconductor)
@@ -256,16 +256,16 @@ class AddEditDetectorDialog(QDialog):
         form_nai.setSpacing(10)
 
         self.edit_nai_diam = QLineEdit()
-        self.edit_nai_diam.setPlaceholderText("مثال: 3.0")
+        self.edit_nai_diam.setPlaceholderText(f"مثال: {isolate_ltr('3.0')}")
 
         self.edit_nai_height = QLineEdit()
-        self.edit_nai_height.setPlaceholderText("مثال: 3.0")
+        self.edit_nai_height.setPlaceholderText(f"مثال: {isolate_ltr('3.0')}")
 
         self.edit_nai_voltage = QLineEdit()
-        self.edit_nai_voltage.setPlaceholderText("جهد تشغيل PMT الموصى به (مثال: 950)")
+        self.edit_nai_voltage.setPlaceholderText(f"جهد تشغيل {isolate_ltr('PMT')} الموصى به (مثال: {isolate_ltr('950')})")
 
         self.edit_nai_res = QLineEdit()
-        self.edit_nai_res.setPlaceholderText("الدقة الاسمية %R (مثال: 7.5)")
+        self.edit_nai_res.setPlaceholderText(f"الدقة الاسمية {isolate_ltr('%R')} (مثال: {isolate_ltr('7.5')})")
 
         form_nai.addRow("قطر البلورة (بوصة) (*):", self.edit_nai_diam)
         form_nai.addRow("ارتفاع البلورة (بوصة) (*):", self.edit_nai_height)

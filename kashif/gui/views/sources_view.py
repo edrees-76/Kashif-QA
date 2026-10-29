@@ -44,6 +44,7 @@ from kashif.gui.dialog_utils import (
     enable_dialog_window_controls,
     adjust_dialog_size_to_screen,
     attach_calendar_popup_filter,
+    install_wheel_guard_on_inputs,
 )
 
 from kashif.core.decay import (
@@ -661,6 +662,9 @@ class AddEditSourceDialog(QDialog):
         else:
             date_edit.setDate(QDate.currentDate())
         attach_calendar_popup_filter(date_edit)
+        install_wheel_guard_on_inputs(combo_nuclide)
+        install_wheel_guard_on_inputs(combo_unit)
+        install_wheel_guard_on_inputs(date_edit)
         self.tbl_isotopes.setCellWidget(row_idx, 3, date_edit)
 
         # 5. Delete Row Button
@@ -840,7 +844,7 @@ class SourceDetailDialog(QDialog):
         enable_dialog_window_controls(self)
 
         self._init_ui()
-        adjust_dialog_size_to_screen(self, preferred_width=750, preferred_height=650)
+        adjust_dialog_size_to_screen(self, preferred_width=800, preferred_height=650)
 
     def _init_ui(self) -> None:
         root_layout = QVBoxLayout(self)
@@ -913,8 +917,13 @@ class SourceDetailDialog(QDialog):
             "الفعالية اللحظية",
             f"تقييم {isolate_ltr('R-SRC-01')}",
         ])
-        self.tbl_calc.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.tbl_calc.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        hdr_calc = self.tbl_calc.horizontalHeader()
+        hdr_calc.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr_calc.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hdr_calc.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hdr_calc.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        hdr_calc.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        hdr_calc.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl_calc.verticalHeader().setVisible(False)
         self.tbl_calc.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.tbl_calc.doubleClicked.connect(self._on_isotope_double_clicked)
