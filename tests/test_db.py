@@ -83,7 +83,7 @@ def test_schema_migrations_runner(temp_db_path):
     """TASK-0.3: Migration engine applies Version 1 and records execution in schema_migrations."""
     conn = create_connection(temp_db_path)
     
-    # First run applies migrations 1 through 9
+    # First run applies migrations 1 through 10
     applied = apply_migrations(conn)
     assert 1 in applied
     assert 2 in applied
@@ -94,7 +94,8 @@ def test_schema_migrations_runner(temp_db_path):
     assert 7 in applied
     assert 8 in applied
     assert 9 in applied
-    assert get_applied_migrations(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert 10 in applied
+    assert get_applied_migrations(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     
     # Second run is idempotent
     second_run = apply_migrations(conn)
@@ -838,7 +839,7 @@ def test_migration_008_co60_cs137_lnhb_half_lives(temp_db_path):
 
         # Apply Migration 008 via apply_migrations
         newly_applied = apply_migrations(conn_mig)
-        assert newly_applied == [8, 9]
+        assert newly_applied == [8, 9, 10]
 
         cur_mig = conn_mig.cursor()
 

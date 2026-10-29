@@ -397,8 +397,12 @@ class TestHPGeInspectionWizard:
         wizard.save_draft(show_feedback=False)
 
         # فحص ما تم تمريره لقاعدة البيانات: بما أنه لم يؤكد، لا تُرسل في payload التحديث
-        # (قاعدة البيانات ستحتفظ بافتراضياتها في حال لم تُرسل، ولكن المعالج لا يوثقها)
+        # وتبقى في قاعدة البيانات NULL بلا افتراضات محقونة (TASK-2.2b)
         full = service.get_inspection_full(insp_id)
+        assert full["hpge_measurements"] is None or (
+            full["hpge_measurements"]["hv_ramp_source"] is None
+            and full["hpge_measurements"]["hv_ramp_rate_v_per_s"] is None
+        )
 
         # الآن الفني يحدد خانة التأكيد ويحفظ
         wizard.chk_ramp_confirm.setChecked(True)
@@ -605,7 +609,7 @@ class TestHPGeInspectionWizard:
         assert wizard2.combo_ramp_source.currentData() == "ACQUISITION_SOFTWARE"
         assert wizard2.edit_ramp_rate.text() == "5.0"
         assert wizard2.chk_ramp_confirm.isChecked() is False
-        assert wizard2.lbl_ramp_confirm_note.text() == "قيم مخزّنة سابقاً — أكّدها من جديد"
+        assert wizard2.lbl_ramp_confirm_note.text() == "مؤكَّدة في جلسة سابقة"
 
         # تعديل التبريد في الخطوة 1 وحفظ دون لمس تأكيد الرفع
         wizard2.edit_cooling_hours.setText("8.0")
@@ -996,3 +1000,169 @@ class TestHPGeInspectionWizard:
         assert "((" not in msg2 and "))" not in msg2
         assert "المطلوب:" not in banner_text2
         assert "المطلوب:" not in msg2
+
+
+    def test_wizard_hv_ramp_lifecycle_draft_null_and_reopen_preservation(self, wizard_db, tech1_session, qapp):
+        """(TASK-2.2b البند 4) مسودة جديدة تحفظ الخطوة 1 فقط لا تكتب شيئاً في العمودين (NULL)؛
+        بعد التأكيد تُكتب القيمتان؛ إعادة الفتح والحفظ دون تأكيد تحفظ القيم كما هي؛
+        وعندما تكون القيم NULL يُترك الحقلان فارغين بلا أي نص 'مخزّنة سابقاً'."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+
+        # 1. فتح المعالج على المسودة الجديدة وتعبئة وحفظ الخطوة 1 فقط
+        wizard1 = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+        wizard1.combo_window_status.setCurrentIndex(1)  # INTACT
+        wizard1.edit_cooling_hours.setText("7.0")
+        wizard1.combo_vacuum_intact.setCurrentIndex(1)  # 1
+        wizard1.combo_wet_frozen.setCurrentIndex(1)  # 0
+        assert wizard1.save_draft(show_feedback=False) is True
+
+        # التحقق من أن العمودين في القاعدة ما زالا NULL تماماً
+        row1 = wizard_db.cursor().execute(
+            "SELECT hv_ramp_source, hv_ramp_rate_v_per_s FROM inspection_hpge_measurements WHERE inspection_id = ?",
+            (insp_id,),
+        ).fetchone()
+        assert row1["hv_ramp_source"] is None
+        assert row1["hv_ramp_rate_v_per_s"] is None
+
+        # 2. إعادة فتح المسودة: الحقلان فارغان ولا يظهر نص 'مخزّنة سابقاً' أو 'مؤكدة'
+        wizard2 = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+        assert wizard2.combo_ramp_source.currentIndex() == 0
+        assert wizard2.combo_ramp_source.currentData() is None
+        assert wizard2.edit_ramp_rate.text() == ""
+        assert wizard2.chk_ramp_confirm.isChecked() is False
+        assert wizard2.lbl_ramp_confirm_note.text() == ""
+        assert wizard2.lbl_ramp_confirm_note.isVisible() is False
+
+        # حفظ مجدداً دون تأكيد لا يكتب شيئاً في العمودين
+        assert wizard2.save_draft(show_feedback=False) is True
+        row2 = wizard_db.cursor().execute(
+            "SELECT hv_ramp_source, hv_ramp_rate_v_per_s FROM inspection_hpge_measurements WHERE inspection_id = ?",
+            (insp_id,),
+        ).fetchone()
+        assert row2["hv_ramp_source"] is None
+        assert row2["hv_ramp_rate_v_per_s"] is None
+
+        # 3. إدخال قيم الرفع وتأكيدها صراحة ثم الحفظ
+        wizard2.combo_ramp_source.setCurrentIndex(2)  # ACQUISITION_SOFTWARE
+        wizard2.edit_ramp_rate.setText("8.0")
+        wizard2.chk_ramp_confirm.setChecked(True)
+        assert wizard2.save_draft(show_feedback=False) is True
+
+        row3 = wizard_db.cursor().execute(
+            "SELECT hv_ramp_source, hv_ramp_rate_v_per_s FROM inspection_hpge_measurements WHERE inspection_id = ?",
+            (insp_id,),
+        ).fetchone()
+        assert row3["hv_ramp_source"] == "ACQUISITION_SOFTWARE"
+        assert row3["hv_ramp_rate_v_per_s"] == 8.0
+
+        # 4. إعادة الفتح الآن: القيمتان تظهران مع نص 'مؤكَّدة في جلسة سابقة' وخانة التأكيد غير مؤشرة
+        wizard3 = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+        wizard3.show()
+        wizard3.stack.setCurrentIndex(1)  # الانتقال للخطوة 2 حيث توجد حقول الرفع وملاحظة التأكيد
+        assert wizard3.combo_ramp_source.currentData() == "ACQUISITION_SOFTWARE"
+        assert wizard3.edit_ramp_rate.text() == "8.0"
+        assert wizard3.chk_ramp_confirm.isChecked() is False
+        assert wizard3.lbl_ramp_confirm_note.text() == "مؤكَّدة في جلسة سابقة"
+        assert wizard3.lbl_ramp_confirm_note.isVisible() is True
+
+        # حفظ دون تأكيد يحافظ على القيم المخزنة كما هي
+        assert wizard3.save_draft(show_feedback=False) is True
+        row4 = wizard_db.cursor().execute(
+            "SELECT hv_ramp_source, hv_ramp_rate_v_per_s FROM inspection_hpge_measurements WHERE inspection_id = ?",
+            (insp_id,),
+        ).fetchone()
+        assert row4["hv_ramp_source"] == "ACQUISITION_SOFTWARE"
+        assert row4["hv_ramp_rate_v_per_s"] == 8.0
+
+    def test_step2_full_grab_contrast_light_and_dark(self, wizard_db, tech1_session, qapp):
+        """(TASK-2.2b البند 5) تصوير (grab) الصفحة 2 كاملة في الثيمين الداكن والفاتح
+        والتأكد من أن نسبة التباين لنص عنوان المؤقت وعناوين الحقول >= 4.5 مقابل خلفيتها."""
+        from kashif.gui.theme import set_mode, get_stylesheet, COLORS
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtWidgets import QFrame, QFormLayout
+        import os
+
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+
+        def rel_lum(c: QColor) -> float:
+            def f(ch):
+                val = ch / 255.0
+                return val / 12.92 if val <= 0.03928 else ((val + 0.055) / 1.055) ** 2.4
+            return 0.2126 * f(c.red()) + 0.7152 * f(c.green()) + 0.0722 * f(c.blue())
+
+        def calc_contrast(c1: QColor, c2: QColor) -> float:
+            l1 = rel_lum(c1)
+            l2 = rel_lum(c2)
+            return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+
+        # مجلدات حفظ لقطات الصفحة 2 للتوثيق
+        out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "output", "grab_step2"))
+        os.makedirs(out_dir, exist_ok=True)
+        artifact_dir = r"C:\Users\DELL\.gemini\antigravity\brain\5c0a7800-2b5d-45f4-a075-cc02dc05861d\step2_grabs"
+        os.makedirs(artifact_dir, exist_ok=True)
+
+        for theme in ["light", "dark"]:
+            set_mode(theme)
+            qapp.setStyleSheet(get_stylesheet(theme))
+
+            wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+            wizard.setStyleSheet(get_stylesheet(theme))
+            wizard.resize(900, 700)
+            wizard.show()
+
+            # الانتقال للصفحة 2
+            wizard.stack.setCurrentIndex(1)
+            page2 = wizard.stack.widget(1)
+            assert page2 is not None
+
+            # تصوير الصفحة 2 كاملة (Full Grab)
+            img = page2.grab().toImage()
+            assert img.width() > 0 and img.height() > 0
+
+            # حفظ اللقطة للتوثيق في المجلدين
+            fname = f"hpge_wizard_step2_{theme}.png"
+            img.save(os.path.join(out_dir, fname))
+            img.save(os.path.join(artifact_dir, fname))
+
+            # خلفية البطاقة المعتمدة لكل ثيم
+            card_bg = QColor(COLORS["dark_card"] if theme == "dark" else COLORS["light_card"])
+
+            # 1. فحص نسبة التباين لعنوان المؤقت
+            timer_hdr = page2.findChild(QLabel, "lbl_timer_header")
+            assert timer_hdr is not None
+            th_color = timer_hdr.palette().color(timer_hdr.foregroundRole())
+            cr_hdr = calc_contrast(th_color, card_bg)
+            assert cr_hdr >= 4.5, f"Timer header contrast ratio in {theme} theme is {cr_hdr:.2f} < 4.5"
+
+            # 2. فحص نسبة التباين لعنوان قسم NIM
+            lbl_nim = page2.findChild(QLabel, "lbl_nim_section")
+            assert lbl_nim is not None
+            nim_color = lbl_nim.palette().color(lbl_nim.foregroundRole())
+            cr_nim = calc_contrast(nim_color, card_bg)
+            assert cr_nim >= 4.5, f"NIM section header contrast ratio in {theme} theme is {cr_nim:.2f} < 4.5"
+
+            # 3. فحص عناوين الحقول في استمارة الخطوة 2
+            form_cards = [w for w in page2.findChildren(QFrame) if w.property("class") == "card"]
+            assert len(form_cards) >= 1
+            for fc in form_cards:
+                fl = fc.findChild(QFormLayout)
+                if fl:
+                    for row_i in range(fl.rowCount()):
+                        item = fl.itemAt(row_i, QFormLayout.ItemRole.LabelRole)
+                        if item and item.widget() and isinstance(item.widget(), QLabel):
+                            w_lbl = item.widget()
+                            if not w_lbl.text().strip():
+                                continue
+                            lbl_color = w_lbl.palette().color(w_lbl.foregroundRole())
+                            cr_f = calc_contrast(lbl_color, card_bg)
+                            assert cr_f >= 4.5, f"Field label '{w_lbl.text()}' contrast in {theme} is {cr_f:.2f} < 4.5"
+
+            wizard.close()
+
+def test_hpge_wizard_class_docstring():
+    """التحقق من وجود docstring صريح لصنف HPGeInspectionWizard وأنه يحوي كلمة 'معالج'."""
+    assert HPGeInspectionWizard.__doc__ is not None
+    assert "معالج" in HPGeInspectionWizard.__doc__
+
