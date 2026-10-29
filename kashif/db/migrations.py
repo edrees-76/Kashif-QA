@@ -509,6 +509,170 @@ def migration_008_co60_cs137_lnhb_half_lives(conn: sqlite3.Connection) -> None:
     cursor.close()
 
 
+def migration_009_inspections_and_hpge_measurements(conn: sqlite3.Connection) -> None:
+    """Migration 009: HPGe detector inspection tables, measurements, peaks, instruments,
+    sources, attachments, and retry history according to ER schema and governance constraints.
+    """
+    cursor = conn.cursor()
+
+    # 1. inspections table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS inspections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_number TEXT UNIQUE,
+        detector_id INTEGER NOT NULL REFERENCES detectors(id) ON DELETE RESTRICT,
+        technician_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        approver_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        inspection_date TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED')),
+        verdict TEXT CHECK(verdict IS NULL OR verdict IN ('PASS', 'OUT_OF_SPEC', 'FAILURE')),
+        rejection_reason TEXT,
+        manager_notes TEXT,
+        technician_signature_token TEXT,
+        manager_signature_token TEXT,
+        approved_at TEXT,
+        superseded_by_id INTEGER REFERENCES inspections(id) ON DELETE SET NULL,
+        snapshot_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspections_detector_id ON inspections(detector_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspections_technician_id ON inspections(technician_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspections_approver_id ON inspections(approver_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspections_status ON inspections(status);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_inspections_report_number ON inspections(report_number);")
+
+    # 2. inspection_hpge_measurements table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS inspection_hpge_measurements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inspection_id INTEGER UNIQUE NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+        cooling_hours REAL,
+        cryostat_intact INTEGER DEFAULT 1,
+        beryllium_window_status TEXT CHECK(beryllium_window_status IS NULL OR beryllium_window_status IN ('INTACT', 'SCRATCHED', 'BROKEN')),
+        vacuum_intact INTEGER DEFAULT 1,
+        cryostat_wet_or_frozen INTEGER DEFAULT 0,
+        v_pos_24 REAL,
+        v_neg_24 REAL,
+        v_pos_12 REAL,
+        v_neg_12 REAL,
+        v_pos_6 REAL,
+        v_neg_6 REAL,
+        applied_voltage REAL,
+        applied_polarity TEXT CHECK(applied_polarity IS NULL OR applied_polarity IN ('POSITIVE', 'NEGATIVE')),
+        hv_ramp_source TEXT NOT NULL DEFAULT 'MANUAL' CHECK(hv_ramp_source IN ('MANUAL', 'ACQUISITION_SOFTWARE')),
+        hv_ramp_rate_v_per_s REAL NOT NULL DEFAULT 10.0,
+        preamp_type TEXT CHECK(preamp_type IS NULL OR preamp_type IN ('RESISTIVE', 'TRP', 'OTHER')),
+        has_preamp_signal INTEGER DEFAULT 1,
+        shaping_time_us REAL,
+        coarse_gain REAL,
+        fine_gain REAL,
+        baseline_restorer TEXT,
+        pole_zero_setting TEXT,
+        has_pz_distortion INTEGER DEFAULT 0,
+        amp_output_amplitude REAL,
+        total_count_rate_cps REAL,
+        dead_time_pct REAL,
+        calibration_slope_m REAL,
+        calibration_intercept_b REAL,
+        measured_fwhm_kev REAL,
+        measured_fwtm_kev REAL,
+        form_factor REAL,
+        net_counts_1332 REAL,
+        efficiency_method TEXT CHECK(efficiency_method IS NULL OR efficiency_method IN ('COMPARISON_NAI', 'CALIBRATED_SOURCE')),
+        live_time_sec REAL,
+        relative_efficiency_pct REAL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hpge_meas_inspection_id ON inspection_hpge_measurements(inspection_id);")
+
+    # 3. inspection_peaks table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS inspection_peaks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inspection_id INTEGER NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+        detector_type TEXT NOT NULL DEFAULT 'HPGE' CHECK(detector_type IN ('HPGE', 'NAI')),
+        peak_name TEXT NOT NULL,
+        energy_reference_kev REAL NOT NULL,
+        centroid_channel REAL,
+        fwhm_channels REAL,
+        fwhm_kev REAL,
+        fwtm_channels REAL,
+        fwtm_kev REAL,
+        net_area_counts REAL,
+        live_time_sec REAL,
+        created_at TEXT NOT NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_peaks_inspection_id ON inspection_peaks(inspection_id);")
+
+    # 4. inspection_instruments table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS inspection_instruments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inspection_id INTEGER NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+        instrument_id INTEGER NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,
+        instrument_role TEXT NOT NULL,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(inspection_id, instrument_id, instrument_role)
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insp_instruments_inspection_id ON inspection_instruments(inspection_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insp_instruments_instrument_id ON inspection_instruments(instrument_id);")
+
+    # 5. inspection_sources table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS inspection_sources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inspection_id INTEGER NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+        source_role TEXT NOT NULL,
+        distance_cm REAL,
+        decay_corrected_activity_bq REAL,
+        created_at TEXT NOT NULL,
+        UNIQUE(inspection_id, source_id, source_role)
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insp_sources_inspection_id ON inspection_sources(inspection_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insp_sources_source_id ON inspection_sources(source_id);")
+
+    # 6. attachments table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inspection_id INTEGER NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+        file_path TEXT NOT NULL,
+        file_hash_sha256 TEXT NOT NULL,
+        file_type TEXT NOT NULL CHECK(file_type IN ('PREAMP_WAVEFORM', 'AMP_WAVEFORM', 'SPECTRUM_PLOT', 'OTHER')),
+        caption TEXT,
+        created_at TEXT NOT NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_attachments_inspection_id ON attachments(inspection_id);")
+
+    # 7. measurement_retries table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS measurement_retries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inspection_id INTEGER NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+        stage_number INTEGER NOT NULL,
+        attempt_number INTEGER NOT NULL,
+        reason_for_retry TEXT NOT NULL,
+        corrective_action_taken TEXT NOT NULL,
+        previous_values_json TEXT NOT NULL,
+        new_values_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_retries_inspection_id ON measurement_retries(inspection_id);")
+
+    cursor.close()
+
+
 # Registry of migrations: version -> (description, migration_function)
 MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     1: ("Initial schema: users, audit_log with hash-chaining triggers, system_settings", migration_001_initial_core_security),
@@ -519,6 +683,7 @@ MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     6: ("Nuclide uncertainties, DDEP references, and Zn-65 verified half-life correction", migration_006_nuclides_uncertainty_and_zn65_ddep),
     7: ("Update verified LNHB/DDEP half-lives and uncertainties for 9 standard gamma radionuclides", migration_007_lnhb_half_lives),
     8: ("Update verified LNHB/DDEP half-lives and uncertainties for Co-60 and Cs-137", migration_008_co60_cs137_lnhb_half_lives),
+    9: ("HPGe detector inspection tables, measurements, peaks, instruments, sources, attachments, and retry history", migration_009_inspections_and_hpge_measurements),
 }
 
 
