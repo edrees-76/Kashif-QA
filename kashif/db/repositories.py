@@ -1643,9 +1643,11 @@ class InspectionRepository:
         if hasattr(applied_polarity, "value"):
             applied_polarity = applied_polarity.value
 
-        hv_ramp_source = data.get("hv_ramp_source") or "MANUAL"
+        hv_ramp_source = data.get("hv_ramp_source")
+        if hasattr(hv_ramp_source, "value"):
+            hv_ramp_source = hv_ramp_source.value
         hv_ramp_rate = data.get("hv_ramp_rate_v_per_s")
-        hv_ramp_rate_v_per_s = float(hv_ramp_rate) if hv_ramp_rate is not None else 10.0
+        hv_ramp_rate_v_per_s = float(hv_ramp_rate) if hv_ramp_rate is not None else None
 
         preamp_type = data.get("preamp_type")
         if hasattr(preamp_type, "value"):

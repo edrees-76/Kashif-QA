@@ -13,7 +13,7 @@ import re
 import sqlite3
 from typing import Any, Dict, Optional, Tuple
 
-from PyQt6.QtCore import QRect, QSize, Qt, QTimer
+from PyQt6.QtCore import QEvent, QRect, QSize, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QDoubleValidator, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -53,7 +53,7 @@ from kashif.gui.dialog_utils import (
     enable_dialog_window_controls,
     install_wheel_guard_on_inputs,
 )
-from kashif.gui.theme import COLORS, get_stylesheet
+from kashif.gui.theme import COLORS, get_mode, get_stylesheet
 from kashif.services.inspection_service import (
     InspectionService,
     InspectionWorkflowError,
@@ -256,6 +256,48 @@ class HPGeInspectionWizard(QDialog):
         if not self.is_editable:
             self._apply_read_only_mode()
 
+    def _update_timer_display_style(self) -> None:
+        if get_mode() == "dark":
+            self.lbl_timer_display.setStyleSheet(
+                f"font-size: 24px; font-weight: bold; color: {COLORS['dark_teal']}; "
+                f"background-color: {COLORS['dark_card']}; border: 1px solid {COLORS['dark_line']}; padding: 6px 16px; border-radius: 4px;"
+            )
+        else:
+            self.lbl_timer_display.setStyleSheet(
+                f"font-size: 24px; font-weight: bold; color: {COLORS['navy']}; "
+                f"background-color: {COLORS['light_mist']}; padding: 6px 16px; border-radius: 4px;"
+            )
+
+    def _update_ramp_confirm_note_style(self) -> None:
+        c = COLORS["dark_orange"] if get_mode() == "dark" else COLORS["warning"]
+        self.lbl_ramp_confirm_note.setStyleSheet(f"color: {c}; font-weight: bold; margin-right: 8px;")
+
+    def _update_safety_warning_style(self, lbl: QLabel) -> None:
+        if get_mode() == "dark":
+            lbl.setStyleSheet(
+                "background-color: rgba(179, 38, 30, 0.25); color: #F87171; "
+                "border: 1px solid #F87171; border-radius: 4px; padding: 8px; font-weight: bold;"
+            )
+        else:
+            lbl.setStyleSheet(
+                f"background-color: #FDE8E8; color: {COLORS['error']}; "
+                f"border: 1px solid {COLORS['error']}; border-radius: 4px; padding: 8px; font-weight: bold;"
+            )
+
+    def refresh_theme(self) -> None:
+        """تحديث أنماط العناصر الداخلية عند تبديل الثيم."""
+        if hasattr(self, "lbl_timer_display"):
+            self._update_timer_display_style()
+        if hasattr(self, "lbl_ramp_confirm_note"):
+            self._update_ramp_confirm_note_style()
+        if hasattr(self, "step_buttons"):
+            self._update_step_navigation_ui()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.StyleChange):
+            self.refresh_theme()
+
     def done(self, r: int) -> None:
         """إيقاف كافة المؤقتات عند إغلاق النافذة بأي وسيلة (accept, reject, close)."""
         self._stop_all_timers()
@@ -301,7 +343,7 @@ class HPGeInspectionWizard(QDialog):
         det_code = self.detector.get("code") or "—"
         det_serial = self.detector.get("serial_number") or "—"
         lbl_meta = QLabel(f"الكاشف: <b>{format_mixed_text(det_code)}</b> ({isolate_ltr(det_serial)}) | فحص رقم: <b>{self.inspection_id}</b>")
-        lbl_meta.setStyleSheet(f"color: {COLORS['light_slate']}; font-size: 13px;")
+        lbl_meta.setProperty("class", "hint")
         title_row.addWidget(lbl_meta)
         header_layout.addLayout(title_row)
 
@@ -309,10 +351,16 @@ class HPGeInspectionWizard(QDialog):
         if not self.is_editable:
             lbl_ro = QLabel("🔒 وضع العرض فقط: الفني صاحب الفحص وحده يملك صلاحية التعديل وحفظ المسودة والتقديم.")
             lbl_ro.setObjectName("lbl_read_only_notice")
-            lbl_ro.setStyleSheet(
-                f"background-color: {COLORS['light_mist']}; color: {COLORS['navy']}; "
-                f"border: 1px solid {COLORS['teal']}; border-radius: 4px; padding: 6px; font-weight: bold;"
-            )
+            if get_mode() == "dark":
+                lbl_ro.setStyleSheet(
+                    f"background-color: {COLORS['dark_card']}; color: {COLORS['dark_teal']}; "
+                    f"border: 1px solid {COLORS['dark_line']}; border-radius: 4px; padding: 6px; font-weight: bold;"
+                )
+            else:
+                lbl_ro.setStyleSheet(
+                    f"background-color: {COLORS['light_mist']}; color: {COLORS['navy']}; "
+                    f"border: 1px solid {COLORS['teal']}; border-radius: 4px; padding: 6px; font-weight: bold;"
+                )
             header_layout.addWidget(lbl_ro)
 
         root_layout.addWidget(header_card)
@@ -432,7 +480,7 @@ class HPGeInspectionWizard(QDialog):
         self.lbl_step1_status = QLabel("يرجى فحص الحالة المادية لنافذة البريليوم واستقرار الفراغ وزمن التبريد.")
         self.lbl_step1_status.setObjectName("lbl_step1_status")
         self.lbl_step1_status.setWordWrap(True)
-        self.lbl_step1_status.setStyleSheet(f"border: none; background: transparent; font-weight: bold; color: {COLORS['navy']};")
+        self.lbl_step1_status.setStyleSheet("border: none; background: transparent; font-weight: bold;")
         banner_l.addWidget(self.lbl_step1_status)
 
         layout.addWidget(self.card_step1_banner)
@@ -470,7 +518,7 @@ class HPGeInspectionWizard(QDialog):
         else:
             lbl_text = f"(الحد الأدنى المعتمد: {isolate_quantity(6.0, 'h')})"
         lbl_cert_cooling = QLabel(lbl_text)
-        lbl_cert_cooling.setStyleSheet(f"color: {COLORS['light_slate']};")
+        lbl_cert_cooling.setProperty("class", "hint")
         cooling_row.addWidget(lbl_cert_cooling)
 
         form.addRow("مدة التبريد بالنيتروجين *:", cooling_row)
@@ -552,7 +600,7 @@ class HPGeInspectionWizard(QDialog):
         self.lbl_step2_status = QLabel("يرجى قياس جهود سلة NIM، وتأكيد قطبية الجهد ومعدل الرفع وإشارة المضخم الأولي.")
         self.lbl_step2_status.setObjectName("lbl_step2_status")
         self.lbl_step2_status.setWordWrap(True)
-        self.lbl_step2_status.setStyleSheet(f"border: none; background: transparent; font-weight: bold; color: {COLORS['navy']};")
+        self.lbl_step2_status.setStyleSheet("border: none; background: transparent; font-weight: bold;")
         b2_layout.addWidget(self.lbl_step2_status)
 
         layout.addWidget(self.card_step2_banner)
@@ -566,7 +614,8 @@ class HPGeInspectionWizard(QDialog):
 
         # جهود سلة NIM القياسية
         lbl_nim_section = QLabel("<b>جهود سلة NIM القياسية (Standard NIM Voltages):</b>")
-        lbl_nim_section.setStyleSheet(f"color: {COLORS['navy']};")
+        lbl_nim_section.setObjectName("lbl_nim_section")
+        lbl_nim_section.setProperty("class", "h2")
         form.addRow(lbl_nim_section)
 
         val_dbl = QDoubleValidator(-100.0, 100.0, 2, self)
@@ -643,7 +692,7 @@ class HPGeInspectionWizard(QDialog):
         pol_layout = QHBoxLayout()
         pol_layout.addWidget(self.combo_applied_polarity)
         lbl_pol_guide = QLabel(f"({', '.join(pol_info)})")
-        lbl_pol_guide.setStyleSheet(f"color: {COLORS['light_slate']};")
+        lbl_pol_guide.setProperty("class", "hint")
         pol_layout.addWidget(lbl_pol_guide)
         form.addRow("قطبية الجهد العالي المطبق *:", pol_layout)
 
@@ -659,7 +708,7 @@ class HPGeInspectionWizard(QDialog):
 
         nom_v = self.detector.get("nominal_voltage")
         lbl_nom_v = QLabel(f"(الجهد الاسمي للكاشف: {isolate_quantity(nom_v or 0.0, 'V')})")
-        lbl_nom_v.setStyleSheet(f"color: {COLORS['light_slate']};")
+        lbl_nom_v.setProperty("class", "hint")
         volt_layout.addWidget(lbl_nom_v)
         form.addRow("الجهد العالي المطبق *:", volt_layout)
 
@@ -684,7 +733,7 @@ class HPGeInspectionWizard(QDialog):
         max_ramp = self.detector.get("hv_ramp_max_v_per_s") or 10.0
         ramp_ref = self.detector.get("hv_ramp_reference") or "غير محدد في بطاقة الكاشف"
         lbl_ramp_limit = QLabel(f"(الحد الأقصى: {isolate_quantity(max_ramp, 'V/s')} | المرجع: {ramp_ref})")
-        lbl_ramp_limit.setStyleSheet(f"color: {COLORS['light_slate']};")
+        lbl_ramp_limit.setProperty("class", "hint")
         ramp_layout.addWidget(lbl_ramp_limit)
         form.addRow("معدل رفع الجهد (V/s) *:", ramp_layout)
 
@@ -697,7 +746,7 @@ class HPGeInspectionWizard(QDialog):
 
         self.lbl_ramp_confirm_note = QLabel("")
         self.lbl_ramp_confirm_note.setObjectName("lbl_ramp_confirm_note")
-        self.lbl_ramp_confirm_note.setStyleSheet(f"color: {COLORS['warning']}; font-weight: bold; margin-right: 8px;")
+        self._update_ramp_confirm_note_style()
         chk_layout.addWidget(self.lbl_ramp_confirm_note)
         chk_layout.addStretch()
         form.addRow("", chk_layout)
@@ -722,28 +771,23 @@ class HPGeInspectionWizard(QDialog):
         # تنبيه أمان صارم ظاهر دائماً
         lbl_safety_warning = QLabel("⚠️ تنبيه أمان صارم: ممنوع توصيل أو فصل كابل الجهد العالي أثناء تشغيل مجهز القدرة!")
         lbl_safety_warning.setObjectName("lbl_safety_warning")
-        lbl_safety_warning.setStyleSheet(
-            f"background-color: #FDE8E8; color: {COLORS['error']}; "
-            f"border: 1px solid {COLORS['error']}; border-radius: 4px; padding: 8px; font-weight: bold;"
-        )
+        self._update_safety_warning_style(lbl_safety_warning)
         timer_layout.addWidget(lbl_safety_warning)
 
         timer_header = QLabel("مؤقت رفع الجهد الاسترشادي (حساب تقريبي للزمن اللازم للرفع دون تحكم آلي):")
-        timer_header.setStyleSheet(f"font-weight: bold; color: {COLORS['navy']};")
+        timer_header.setObjectName("lbl_timer_header")
+        timer_header.setProperty("class", "h2")
         timer_layout.addWidget(timer_header)
 
         self.lbl_timer_calc = QLabel("الزمن المقترح: أدخل الجهد والمعدل لحساب زمن الرفع")
         self.lbl_timer_calc.setObjectName("lbl_timer_calc")
-        self.lbl_timer_calc.setStyleSheet(f"color: {COLORS['light_slate']};")
+        self.lbl_timer_calc.setProperty("class", "hint")
         timer_layout.addWidget(self.lbl_timer_calc)
 
         timer_ctrl_row = QHBoxLayout()
         self.lbl_timer_display = QLabel("00:00")
         self.lbl_timer_display.setObjectName("lbl_timer_display")
-        self.lbl_timer_display.setStyleSheet(
-            f"font-size: 24px; font-weight: bold; color: {COLORS['navy']}; "
-            f"background-color: {COLORS['light_mist']}; padding: 6px 16px; border-radius: 4px;"
-        )
+        self._update_timer_display_style()
         timer_ctrl_row.addWidget(self.lbl_timer_display)
 
         self.btn_timer_toggle = QPushButton("▶️ تشغيل المؤقت")
@@ -786,9 +830,9 @@ class HPGeInspectionWizard(QDialog):
         if saved_volt is not None:
             self.edit_applied_voltage.setText(str(saved_volt))
 
-        # عرض مصدر ومعدل الرفع المحفوظين في الحقول مع إبقاء خانة التأكيد غير مؤشرة
+        # عرض مصدر ومعدل الرفع المحفوظين في الحقول فقط إذا كانا غير NULL مع إبقاء خانة التأكيد غير مؤشرة
         saved_src = self.saved_measurements.get("hv_ramp_source")
-        if saved_src:
+        if saved_src is not None:
             idx = self.combo_ramp_source.findData(str(saved_src).upper())
             if idx >= 0:
                 self.combo_ramp_source.setCurrentIndex(idx)
@@ -798,10 +842,13 @@ class HPGeInspectionWizard(QDialog):
         saved_rate = self.saved_measurements.get("hv_ramp_rate_v_per_s")
         if saved_rate is not None:
             self.edit_ramp_rate.setText(str(saved_rate))
+        else:
+            self.edit_ramp_rate.clear()
 
         self.chk_ramp_confirm.setChecked(False)
         if saved_src is not None or saved_rate is not None:
-            self.lbl_ramp_confirm_note.setText("قيم مخزّنة سابقاً — أكّدها من جديد")
+            self._update_ramp_confirm_note_style()
+            self.lbl_ramp_confirm_note.setText("مؤكَّدة في جلسة سابقة")
             self.lbl_ramp_confirm_note.setVisible(True)
         else:
             self.lbl_ramp_confirm_note.setText("")
@@ -864,7 +911,7 @@ class HPGeInspectionWizard(QDialog):
         card_l.addWidget(lbl_notice)
 
         lbl_desc = QLabel("لا يمكن إنهاء الفحص أو تقديمه من هذه الخطوة في هذه المهمة الحالية.")
-        lbl_desc.setStyleSheet(f"color: {COLORS['light_slate']}; font-size: 13px;")
+        lbl_desc.setProperty("class", "hint")
         lbl_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_l.addWidget(lbl_desc)
 
@@ -1165,12 +1212,22 @@ class HPGeInspectionWizard(QDialog):
 
     def _style_banner(self, card: QFrame, level: str) -> None:
         card_id = card.objectName() or "card_banner"
+        mode = get_mode()
         if level == "error":
-            card.setStyleSheet(f"#{card_id} {{ background-color: #FDE8E8; border: 1px solid {COLORS['error']}; border-radius: 6px; }}")
+            if mode == "dark":
+                card.setStyleSheet(f"#{card_id} {{ background-color: rgba(179, 38, 30, 0.25); border: 1px solid #F87171; border-radius: 6px; }}")
+            else:
+                card.setStyleSheet(f"#{card_id} {{ background-color: #FDE8E8; border: 1px solid {COLORS['error']}; border-radius: 6px; }}")
         elif level == "warning":
-            card.setStyleSheet(f"#{card_id} {{ background-color: #FFF4E5; border: 1px solid {COLORS['warning']}; border-radius: 6px; }}")
+            if mode == "dark":
+                card.setStyleSheet(f"#{card_id} {{ background-color: rgba(179, 92, 0, 0.25); border: 1px solid {COLORS['dark_orange']}; border-radius: 6px; }}")
+            else:
+                card.setStyleSheet(f"#{card_id} {{ background-color: #FFF4E5; border: 1px solid {COLORS['warning']}; border-radius: 6px; }}")
         elif level == "success":
-            card.setStyleSheet(f"#{card_id} {{ background-color: #E6F4EA; border: 1px solid {COLORS['success']}; border-radius: 6px; }}")
+            if mode == "dark":
+                card.setStyleSheet(f"#{card_id} {{ background-color: rgba(30, 122, 76, 0.25); border: 1px solid #4ADE80; border-radius: 6px; }}")
+            else:
+                card.setStyleSheet(f"#{card_id} {{ background-color: #E6F4EA; border: 1px solid {COLORS['success']}; border-radius: 6px; }}")
         else:
             card.setStyleSheet(f"#{card_id} {{ background-color: transparent; border: none; }}")
 
@@ -1500,10 +1557,21 @@ class HPGeInspectionWizard(QDialog):
             self.btn_next.setText("التالي ⬅️")
 
     def _get_step_style(self, step_idx: int, is_current: bool) -> str:
+        mode = get_mode()
         if is_current:
+            if mode == "dark":
+                return (
+                    f"background-color: {COLORS['dark_teal']}; color: #0A1A33; "
+                    f"font-weight: bold; border-radius: 4px; padding: 6px 10px; font-size: 13px;"
+                )
             return (
                 f"background-color: {COLORS['navy']}; color: {COLORS['light_card']}; "
                 f"font-weight: bold; border-radius: 4px; padding: 6px 10px; font-size: 13px;"
+            )
+        if mode == "dark":
+            return (
+                f"background-color: {COLORS['dark_card']}; color: {COLORS['dark_slate']}; "
+                f"border: 1px solid {COLORS['dark_line']}; border-radius: 4px; padding: 6px 10px; font-size: 13px;"
             )
         return (
             f"background-color: {COLORS['light_mist']}; color: {COLORS['light_slate']}; "

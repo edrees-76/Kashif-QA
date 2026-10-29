@@ -72,6 +72,7 @@ def insp_db():
     init_migrations_table(conn)
     applied = apply_migrations(conn)
     assert 9 in applied
+    assert 10 in applied
 
     # Insert test users
     c = conn.cursor()
@@ -268,8 +269,8 @@ class TestMigration009:
         )
         cursor.execute("SELECT hv_ramp_source, hv_ramp_rate_v_per_s FROM inspection_hpge_measurements WHERE inspection_id = 100;")
         row = cursor.fetchone()
-        assert row["hv_ramp_source"] == "MANUAL"
-        assert row["hv_ramp_rate_v_per_s"] == 10.0
+        assert row["hv_ramp_source"] is None
+        assert row["hv_ramp_rate_v_per_s"] is None
 
         # رفض قيمة غير صالحة لـ hv_ramp_source
         with pytest.raises(sqlite3.IntegrityError):
@@ -277,6 +278,22 @@ class TestMigration009:
                 """
                 INSERT INTO inspection_hpge_measurements (inspection_id, hv_ramp_source, created_at, updated_at)
                 VALUES (101, 'INVALID_RAMP_SOURCE', '2026-10-29', '2026-10-29');
+                """
+            )
+
+        # رفض قيمة غير صالحة لـ hv_ramp_rate_v_per_s (<= 0)
+        with pytest.raises(sqlite3.IntegrityError):
+            cursor.execute(
+                """
+                INSERT INTO inspection_hpge_measurements (inspection_id, hv_ramp_rate_v_per_s, created_at, updated_at)
+                VALUES (102, -5.0, '2026-10-29', '2026-10-29');
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            cursor.execute(
+                """
+                INSERT INTO inspection_hpge_measurements (inspection_id, hv_ramp_rate_v_per_s, created_at, updated_at)
+                VALUES (103, 0.0, '2026-10-29', '2026-10-29');
                 """
             )
 
@@ -630,6 +647,7 @@ class TestInspectionServiceAndGovernance:
             "v_neg_12": -12.0,
             "applied_voltage": 3000.0,
             "applied_polarity": "POSITIVE",
+            "hv_ramp_source": "MANUAL",
             "hv_ramp_rate_v_per_s": 10.0,
             "has_preamp_signal": True,
             "has_pz_distortion": False,
@@ -1148,19 +1166,18 @@ class TestQualitySecurityFixes:
             assert field in missing, f"Expected {field} to be reported in missing fields"
 
             # 2. اختبار عبر خدمة الفحص وقاعدة البيانات
-            # الحقول التي لا تفرض قيد NOT NULL في مخطط SQLite يتم حفظها بقيمة NULL والتحقق من رفض التقديم والاعتماد
-            if field not in ("hv_ramp_source", "hv_ramp_rate_v_per_s"):
-                insp_id = service.create_draft(detector_id=1, session=tech_session)
-                service.save_hpge_measurements(insp_id, meas, tech_session)
+            # كافة الحقول الإلزامية في MANDATORY_HPGE_FIELDS يتم حفظها بقيمة NULL والتحقق من رفض التقديم والاعتماد
+            insp_id = service.create_draft(detector_id=1, session=tech_session)
+            service.save_hpge_measurements(insp_id, meas, tech_session)
 
-                with pytest.raises(InspectionWorkflowError) as exc_sub:
-                    service.submit_for_approval(insp_id, tech_session)
-                assert field in str(exc_sub.value)
+            with pytest.raises(InspectionWorkflowError) as exc_sub:
+                service.submit_for_approval(insp_id, tech_session)
+            assert field in str(exc_sub.value)
 
-                insp_db.execute("UPDATE inspections SET status = 'PENDING_APPROVAL' WHERE id = ?;", (insp_id,))
-                with pytest.raises(InspectionWorkflowError) as exc_app:
-                    service.approve_inspection(insp_id, manager_session)
-                assert field in str(exc_app.value)
+            insp_db.execute("UPDATE inspections SET status = 'PENDING_APPROVAL' WHERE id = ?;", (insp_id,))
+            with pytest.raises(InspectionWorkflowError) as exc_app:
+                service.approve_inspection(insp_id, manager_session)
+            assert field in str(exc_app.value)
 
     def test_early_stop_failure_conditions_approved_as_failure(self, insp_db, tech_session, manager_session):
         """(c) استثناء الإيقاف المبكر: إخفاقات المرحلتين 1 و 2 تُعتمد كـ FAILURE دون اشتراط بقية القياسات."""
@@ -1293,3 +1310,144 @@ class TestQualitySecurityFixes:
 
 
 
+
+
+
+class TestMigration010AndHVRampNullable:
+    """مجموعة اختبارات الهجرة 010 ومعدل رفع الجهد القابل للقيمة NULL بلا افتراض (TASK-2.2b)."""
+
+    def test_partial_save_without_hv_ramp_leaves_columns_null(self, insp_db, tech_session):
+        """(TASK-2.2b) حفظ جزئي لمسودة دون إدخال hv_ramp يترك العمودين NULL في قاعدة البيانات بلا افتراض."""
+        service = InspectionService(insp_db)
+        insp_id = service.create_draft(detector_id=1, session=tech_session)
+
+        # حفظ جزئي للمرحلة الأولى فقط
+        service.save_hpge_measurements(insp_id, {"cooling_hours": 7.5, "cryostat_intact": 1}, tech_session)
+
+        cur = insp_db.cursor()
+        cur.execute("SELECT hv_ramp_source, hv_ramp_rate_v_per_s FROM inspection_hpge_measurements WHERE inspection_id = ?;", (insp_id,))
+        row = cur.fetchone()
+        assert row is not None
+        assert row["hv_ramp_source"] is None
+        assert row["hv_ramp_rate_v_per_s"] is None
+
+        # missing_mandatory_fields يعيد كلاً من hv_ramp_source و hv_ramp_rate_v_per_s
+        full = service.get_inspection_full(insp_id)
+        missing = missing_mandatory_fields(full)
+        assert "hv_ramp_source" in missing
+        assert "hv_ramp_rate_v_per_s" in missing
+
+    def test_submit_for_approval_workflow_requires_hv_ramp(self, insp_db, base_measurements, tech_session):
+        """(TASK-2.2b) submit_for_approval يرفض فحصاً كاملاً سوى معدل ومصدر الرفع، ويقبله فور إدخالهما."""
+        service = InspectionService(insp_db)
+        insp_id = service.create_draft(detector_id=1, session=tech_session)
+
+        # قياسات كاملة لكن بدون hv_ramp_source و hv_ramp_rate_v_per_s
+        incomplete = dict(base_measurements)
+        incomplete["hv_ramp_source"] = None
+        incomplete["hv_ramp_rate_v_per_s"] = None
+        service.save_hpge_measurements(insp_id, incomplete, tech_session)
+
+        with pytest.raises(InspectionWorkflowError) as exc_info:
+            service.submit_for_approval(insp_id, tech_session)
+        err_msg = str(exc_info.value)
+        assert "hv_ramp_source" in err_msg or "hv_ramp_rate_v_per_s" in err_msg
+
+        # إدخال المصدر والمعدل المؤكدين مع استكمال باقي القياسات
+        complete = dict(base_measurements)
+        complete["hv_ramp_source"] = "MANUAL"
+        complete["hv_ramp_rate_v_per_s"] = 10.0
+        service.save_hpge_measurements(insp_id, complete, tech_session)
+
+        # التقديم ينجح الآن
+        service.submit_for_approval(insp_id, tech_session)
+        insp = service.repo.get_by_id(insp_id)
+        assert insp["status"] == "PENDING_APPROVAL"
+
+    def test_migration_010_from_v9_sets_null_and_foreign_key_check(self):
+        """(TASK-2.2b) هجرة 010: قاعدة في الإصدار 9 بصف يحمل القيم المحقونة تصبح NULL بعد 010 مع سلامة المفاتيح الأجنبية وتكرار آمن."""
+        from kashif.db.migrations import (
+            migration_001_initial_core_security,
+            migration_002_user_lockout_and_session,
+            migration_003_registries_detectors_instruments_sources,
+            migration_004_multi_isotope_sources,
+            migration_005_hpge_pn_and_detector_specs,
+            migration_006_nuclides_uncertainty_and_zn65_ddep,
+            migration_007_lnhb_half_lives,
+            migration_008_co60_cs137_lnhb_half_lives,
+            migration_009_inspections_and_hpge_measurements,
+            migration_010_hv_ramp_nullable_without_defaults,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        init_migrations_table(conn)
+
+        # تطبيق الهجرات من 1 إلى 9
+        mig_fns = [
+            migration_001_initial_core_security,
+            migration_002_user_lockout_and_session,
+            migration_003_registries_detectors_instruments_sources,
+            migration_004_multi_isotope_sources,
+            migration_005_hpge_pn_and_detector_specs,
+            migration_006_nuclides_uncertainty_and_zn65_ddep,
+            migration_007_lnhb_half_lives,
+            migration_008_co60_cs137_lnhb_half_lives,
+            migration_009_inspections_and_hpge_measurements,
+        ]
+        now = datetime.now(timezone.utc).isoformat()
+        for v, fn in enumerate(mig_fns, start=1):
+            fn(conn)
+            conn.execute("INSERT INTO schema_migrations (version, applied_at, description) VALUES (?, ?, 'v')", (v, now))
+        conn.commit()
+
+        # إدراج مستخدم وكاشف وفحص وصف في الإصدار 9 مع القيم الافتراضية المحقونة
+        cur = conn.cursor()
+        cur.execute("INSERT INTO users (id, username, password_hash, full_name, role, is_active, created_at) VALUES (1, 't1', 'h1', 'Fani', 'TECHNICIAN', 1, ?);", (now,))
+        cur.execute("""
+            INSERT INTO detectors (id, code, detector_type, manufacturer, model, serial_number, crystal_type, nominal_voltage, voltage_polarity, nominal_fwhm_kev, nominal_efficiency_pct, status, created_at, updated_at)
+            VALUES (1, 'DET-001', 'HPGE', 'ORTEC', 'GEM', '123', 'COAXIAL', 3000, 'POSITIVE', 1.8, 30, 'ACTIVE', ?, ?);
+        """, (now, now))
+        cur.execute("""
+            INSERT INTO inspections (id, detector_id, technician_id, inspection_date, status, created_at, updated_at)
+            VALUES (1, 1, 1, '2026-10-29', 'DRAFT', ?, ?);
+        """, (now, now))
+        cur.execute("""
+            INSERT INTO inspection_hpge_measurements (
+                id, inspection_id, cooling_hours, hv_ramp_source, hv_ramp_rate_v_per_s, created_at, updated_at
+            ) VALUES (1, 1, 8.0, 'MANUAL', 10.0, ?, ?);
+        """, (now, now))
+        conn.commit()
+
+        # التأكد أن الصف في الإصدار 9 يحمل القيم القديمة
+        cur.execute("SELECT hv_ramp_source, hv_ramp_rate_v_per_s FROM inspection_hpge_measurements WHERE id = 1;")
+        r9 = cur.fetchone()
+        assert r9["hv_ramp_source"] == "MANUAL"
+        assert r9["hv_ramp_rate_v_per_s"] == 10.0
+
+        # تطبيق الهجرة 010 عبر apply_migrations
+        newly_applied = apply_migrations(conn)
+        assert newly_applied == [10]
+
+        # التحقق من أن القيمتين أصبحتا NULL في الصف القديم
+        cur.execute("SELECT hv_ramp_source, hv_ramp_rate_v_per_s FROM inspection_hpge_measurements WHERE id = 1;")
+        r10 = cur.fetchone()
+        assert r10["hv_ramp_source"] is None
+        assert r10["hv_ramp_rate_v_per_s"] is None
+
+        # التحقق من سلامة المفاتيح الأجنبية
+        cur.execute("PRAGMA foreign_key_check;")
+        fk_check = cur.fetchall()
+        assert fk_check == []
+
+        # تشغيل دالة migration_010 مباشرة مرة ثانية دون خطأ (Idempotent)
+        migration_010_hv_ramp_nullable_without_defaults(conn)
+        conn.commit()
+
+        # التأكد مجدداً أن المفاتيح الأجنبية سليمة
+        cur.execute("PRAGMA foreign_key_check;")
+        assert cur.fetchall() == []
+
+        # apply_migrations لا تُطبّق 010 مرة ثانية
+        re_apply = apply_migrations(conn)
+        assert re_apply == []

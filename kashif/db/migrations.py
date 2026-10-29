@@ -673,6 +673,116 @@ def migration_009_inspections_and_hpge_measurements(conn: sqlite3.Connection) ->
     cursor.close()
 
 
+def migration_010_hv_ramp_nullable_without_defaults(conn: sqlite3.Connection) -> None:
+    """Migration 010: Rebuild inspection_hpge_measurements table so that
+    hv_ramp_source and hv_ramp_rate_v_per_s accept NULL values without DEFAULT.
+
+    Implements Decision 19 (TASK-2.2b):
+    - hv_ramp_source: nullable, no default, CHECK(hv_ramp_source IS NULL OR hv_ramp_source IN ('MANUAL', 'ACQUISITION_SOFTWARE'))
+    - hv_ramp_rate_v_per_s: nullable, no default, CHECK(hv_ramp_rate_v_per_s IS NULL OR hv_ramp_rate_v_per_s > 0)
+    - Existing rows: both columns are set to NULL for all existing rows because we cannot
+      verify whether they were explicitly confirmed by a technician (development data only).
+    - Foreign keys and indexes are safely preserved and verified via PRAGMA foreign_key_check.
+    """
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='inspection_hpge_measurements';")
+    if not cursor.fetchone():
+        cursor.close()
+        return
+
+    cursor.execute("DROP TABLE IF EXISTS inspection_hpge_measurements_new;")
+
+    cursor.execute("""
+    CREATE TABLE inspection_hpge_measurements_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inspection_id INTEGER UNIQUE NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+        cooling_hours REAL,
+        cryostat_intact INTEGER DEFAULT 1,
+        beryllium_window_status TEXT CHECK(beryllium_window_status IS NULL OR beryllium_window_status IN ('INTACT', 'SCRATCHED', 'BROKEN')),
+        vacuum_intact INTEGER DEFAULT 1,
+        cryostat_wet_or_frozen INTEGER DEFAULT 0,
+        v_pos_24 REAL,
+        v_neg_24 REAL,
+        v_pos_12 REAL,
+        v_neg_12 REAL,
+        v_pos_6 REAL,
+        v_neg_6 REAL,
+        applied_voltage REAL,
+        applied_polarity TEXT CHECK(applied_polarity IS NULL OR applied_polarity IN ('POSITIVE', 'NEGATIVE')),
+        hv_ramp_source TEXT CHECK(hv_ramp_source IS NULL OR hv_ramp_source IN ('MANUAL', 'ACQUISITION_SOFTWARE')),
+        hv_ramp_rate_v_per_s REAL CHECK(hv_ramp_rate_v_per_s IS NULL OR hv_ramp_rate_v_per_s > 0),
+        preamp_type TEXT CHECK(preamp_type IS NULL OR preamp_type IN ('RESISTIVE', 'TRP', 'OTHER')),
+        has_preamp_signal INTEGER DEFAULT 1,
+        shaping_time_us REAL,
+        coarse_gain REAL,
+        fine_gain REAL,
+        baseline_restorer TEXT,
+        pole_zero_setting TEXT,
+        has_pz_distortion INTEGER DEFAULT 0,
+        amp_output_amplitude REAL,
+        total_count_rate_cps REAL,
+        dead_time_pct REAL,
+        calibration_slope_m REAL,
+        calibration_intercept_b REAL,
+        measured_fwhm_kev REAL,
+        measured_fwtm_kev REAL,
+        form_factor REAL,
+        net_counts_1332 REAL,
+        efficiency_method TEXT CHECK(efficiency_method IS NULL OR efficiency_method IN ('COMPARISON_NAI', 'CALIBRATED_SOURCE')),
+        live_time_sec REAL,
+        relative_efficiency_pct REAL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """)
+
+    # Copy data, setting hv_ramp_source and hv_ramp_rate_v_per_s to NULL for all existing rows
+    cursor.execute("""
+    INSERT INTO inspection_hpge_measurements_new (
+        id, inspection_id, cooling_hours, cryostat_intact, beryllium_window_status,
+        vacuum_intact, cryostat_wet_or_frozen,
+        v_pos_24, v_neg_24, v_pos_12, v_neg_12,
+        v_pos_6, v_neg_6, applied_voltage, applied_polarity,
+        hv_ramp_source, hv_ramp_rate_v_per_s, preamp_type,
+        has_preamp_signal, shaping_time_us, coarse_gain, fine_gain,
+        baseline_restorer, pole_zero_setting, has_pz_distortion,
+        amp_output_amplitude, total_count_rate_cps, dead_time_pct,
+        calibration_slope_m, calibration_intercept_b,
+        measured_fwhm_kev, measured_fwtm_kev, form_factor,
+        net_counts_1332, efficiency_method, live_time_sec,
+        relative_efficiency_pct, created_at, updated_at
+    )
+    SELECT
+        id, inspection_id, cooling_hours, cryostat_intact, beryllium_window_status,
+        vacuum_intact, cryostat_wet_or_frozen,
+        v_pos_24, v_neg_24, v_pos_12, v_neg_12,
+        v_pos_6, v_neg_6, applied_voltage, applied_polarity,
+        NULL, NULL, preamp_type,
+        has_preamp_signal, shaping_time_us, coarse_gain, fine_gain,
+        baseline_restorer, pole_zero_setting, has_pz_distortion,
+        amp_output_amplitude, total_count_rate_cps, dead_time_pct,
+        calibration_slope_m, calibration_intercept_b,
+        measured_fwhm_kev, measured_fwtm_kev, form_factor,
+        net_counts_1332, efficiency_method, live_time_sec,
+        relative_efficiency_pct, created_at, updated_at
+    FROM inspection_hpge_measurements;
+    """)
+
+    cursor.execute("DROP TABLE inspection_hpge_measurements;")
+    cursor.execute("ALTER TABLE inspection_hpge_measurements_new RENAME TO inspection_hpge_measurements;")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hpge_meas_inspection_id ON inspection_hpge_measurements(inspection_id);")
+
+    # Verify foreign keys
+    cursor.execute("PRAGMA foreign_key_check;")
+    fk_violations = cursor.fetchall()
+    if fk_violations:
+        cursor.close()
+        raise RuntimeError(f"Foreign key violations detected after migration 010: {fk_violations}")
+
+    cursor.close()
+
+
 # Registry of migrations: version -> (description, migration_function)
 MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     1: ("Initial schema: users, audit_log with hash-chaining triggers, system_settings", migration_001_initial_core_security),
@@ -684,6 +794,7 @@ MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     7: ("Update verified LNHB/DDEP half-lives and uncertainties for 9 standard gamma radionuclides", migration_007_lnhb_half_lives),
     8: ("Update verified LNHB/DDEP half-lives and uncertainties for Co-60 and Cs-137", migration_008_co60_cs137_lnhb_half_lives),
     9: ("HPGe detector inspection tables, measurements, peaks, instruments, sources, attachments, and retry history", migration_009_inspections_and_hpge_measurements),
+    10: ("Rebuild inspection_hpge_measurements to allow NULL for hv_ramp_source and hv_ramp_rate_v_per_s without defaults", migration_010_hv_ramp_nullable_without_defaults),
 }
 
 
