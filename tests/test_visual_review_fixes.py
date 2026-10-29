@@ -109,8 +109,8 @@ def test_dialog_maximize_minimize_window_controls(qtbot, db_conn, admin_session)
                 "nuclide_code": "Co-60",
                 "cert_activity_bq": 37000.0,
                 "cert_date": "2024-01-01",
-                "half_life_days": 1925.28,
-                "half_life_value": 5.2714,
+                "half_life_days": 1925.269275,
+                "half_life_value": 5.2711,
                 "half_life_unit": "y",
             }
         ],
@@ -129,7 +129,7 @@ def test_dialog_maximize_minimize_window_controls(qtbot, db_conn, admin_session)
         "code": "Co-60",
         "name_ar": "كوبالت-60",
         "name_en": "Cobalt-60",
-        "half_life_days": 1925.28,
+        "half_life_days": 1925.269275,
     }
 
     dialogs: List[Tuple[str, QDialog]] = [

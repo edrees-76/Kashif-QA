@@ -24,16 +24,18 @@ SECONDS_PER_DAY: float = 86400.0
 MINUTES_PER_DAY: float = 1440.0
 HOURS_PER_DAY: float = 24.0
 
-HALF_LIFE_CO60_DAYS: float = 1925.38
-"""نصف عمر الكوبالت-60 بالأيام (5.2714 سنة * 365.25 يوم/سنة = 1925.38 يوماً).
-المصدر: IAEA MRNI-507 / docs/tasks.md TASK-1.3.
-حالة التأكيد: [TBC: يحتاج تأكيد المهندس]
+HALF_LIFE_CO60_DAYS: float = 1925.269275
+"""نصف عمر الكوبالت-60 بالأيام (5.2711 سنة * 365.25 يوم/سنة = 1925.269275 يوماً).
+المصدر: LNHB/DDEP - Table de Radionucléides (Co-60) / عدم اليقين: 0.0008 سنة.
+رابط الوثيقة: https://www.lnhb.fr/nuclides/Co-60_tables.pdf
+حالة التأكيد: CONFIRMED
 """
 
-HALF_LIFE_CS137_DAYS: float = 10986.72
-"""نصف عمر السيزيوم-137 بالأيام (30.08 سنة * 365.25 يوم/سنة = 10986.72 يوماً).
-المصدر: IAEA MRNI-504 / docs/tasks.md TASK-1.3.
-حالة التأكيد: [TBC: يحتاج تأكيد المهندس]
+HALF_LIFE_CS137_DAYS: float = 10964.0745
+"""نصف عمر السيزيوم-137 بالأيام (30.018 سنة * 365.25 يوم/سنة = 10964.0745 يوماً).
+المصدر: LNHB/DDEP - Table de Radionucléides (Cs-137) / عدم اليقين: 0.022 سنة.
+رابط الوثيقة: https://www.lnhb.fr/nuclides/Cs-137_tables.pdf
+حالة التأكيد: CONFIRMED
 """
 
 BQ_PER_UCI: float = 37000.0
