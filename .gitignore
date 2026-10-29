@@ -60,3 +60,6 @@ Desktop.ini
 # Test outputs
 tests/output/
 
+
+# Claude Code local settings
+.claude/settings.local.json
