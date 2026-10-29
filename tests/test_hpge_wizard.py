@@ -843,8 +843,9 @@ class TestHPGeInspectionWizard:
         assert "⁩" in isolated
 
     def test_chk_ramp_confirm_indicator_stylesheet_and_object_name(self, wizard_db, tech1_session, qapp):
-        """تصحيح TASK-2.2: خانة التأكيد chk_ramp_confirm معرّفة بحد وحجم واضحين، واختبار بكسلي حقيقي."""
-        from PyQt6.QtWidgets import QStyle, QStyleOptionButton
+        """تصحيح TASK-2.2: خانة التأكيد chk_ramp_confirm معرّفة بحد وحجم واضحين، واختبار بكسلي حقيقي للحالات الأربع والثيمين."""
+        from PyQt6.QtGui import QColor
+        from kashif.gui.theme import COLORS, get_stylesheet
 
         service = InspectionService(wizard_db)
         insp_id = service.create_draft(detector_id=1, session=tech1_session)
@@ -859,7 +860,6 @@ class TestHPGeInspectionWizard:
         assert "border" in style
         assert "width" in style
         assert "height" in style
-        assert "focus" in style
         assert "#chk_ramp_confirm" in style
 
         import re
@@ -868,49 +868,84 @@ class TestHPGeInspectionWizard:
         assert w_match and int(w_match.group(1)) >= 18
         assert h_match and int(h_match.group(1)) >= 18
 
-        # 3. اختبار بكسلي حقيقي عبر grab() للحالتين المؤشرة وغير المؤشرة
-        cb = wizard.chk_ramp_confirm
-        cb.show()
+        # دالة حساب السطوع النسبي ونسبة التباين
+        def rel_lum(c: QColor) -> float:
+            def f(ch):
+                val = ch / 255.0
+                return val / 12.92 if val <= 0.03928 else ((val + 0.055) / 1.055) ** 2.4
+            return 0.2126 * f(c.red()) + 0.7152 * f(c.green()) + 0.0722 * f(c.blue())
 
-        # الحالة غير المؤشرة
-        cb.setChecked(False)
-        img_uncheck = cb.grab().toImage()
+        def calc_contrast(c1: QColor, c2: QColor) -> float:
+            l1 = rel_lum(c1)
+            l2 = rel_lum(c2)
+            return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
 
-        # الحالة المؤشرة
-        cb.setChecked(True)
-        img_check = cb.grab().toImage()
+        # مجلد حفظ صور الحالات الأربع للتوثيق
+        out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "output", "grab_chk_ramp_confirm"))
+        os.makedirs(out_dir, exist_ok=True)
+        artifact_dir = r"C:\Users\DELL\.gemini\antigravity\brain\90ae91ab-db14-4005-b180-09aecd3d6241\chk_ramp_confirm_grabs"
+        os.makedirs(artifact_dir, exist_ok=True)
 
-        # تحديد مستطيل المؤشر وحساب إحداثيات مركزه مع أخذ DPR بالحسبان
-        opt = QStyleOptionButton()
-        cb.initStyleOption(opt)
-        ind_rect = cb.style().subElementRect(QStyle.SubElement.SE_CheckBoxIndicator, opt, cb)
-        dpr = cb.devicePixelRatio()
+        for theme in ["light", "dark"]:
+            qapp.setStyleSheet(get_stylesheet(theme))
+            cb = wizard.chk_ramp_confirm
+            cb.resize(420, 36)
+            cb.show()
 
-        cx = int(ind_rect.center().x() * dpr)
-        cy = int(ind_rect.center().y() * dpr)
+            # (ب) نسبة تباين لون النص مع خلفية الصف لا تقل عن 4.5
+            text_color = cb.palette().color(cb.foregroundRole())
+            card_bg = cb.get_card_background()
+            cr = calc_contrast(text_color, card_bg)
+            assert cr >= 4.5, f"Contrast ratio in {theme} theme is {cr:.2f} < 4.5"
 
-        c_uncheck = img_uncheck.pixelColor(cx, cy)
-        c_check = img_check.pixelColor(cx, cy)
+            for checked, focused, name in [
+                (False, False, "unchecked_unfocused"),
+                (False, True,  "unchecked_focused"),
+                (True,  False, "checked_unfocused"),
+                (True,  True,  "checked_focused"),
+            ]:
+                cb.setChecked(checked)
+                if focused:
+                    cb.setFocus()
+                else:
+                    cb.clearFocus()
 
-        # التحقق من أن غير المؤشرة بيضاء تماماً
-        assert c_uncheck.red() > 240 and c_uncheck.green() > 240 and c_uncheck.blue() > 240, (
-            f"Unchecked indicator interior must be white, got {c_uncheck.name()}"
-        )
+                img = cb.grab().toImage()
 
-        # التحقق من أن لون المؤشرة يختلف بفارق كبير (> 100) عن غير المؤشرة
-        diff_red = abs(c_uncheck.red() - c_check.red())
-        diff_green = abs(c_uncheck.green() - c_check.green())
-        diff_blue = abs(c_uncheck.blue() - c_check.blue())
+                # حفظ لقطة الشاشة في المجلدين للتوثيق
+                filename = f"chk_ramp_confirm_{theme}_{name}.png"
+                img.save(os.path.join(out_dir, filename))
+                img.save(os.path.join(artifact_dir, filename))
 
-        max_diff = max(diff_red, diff_green, diff_blue)
-        assert max_diff > 100, (
-            f"Pixel difference between checked and unchecked must exceed 100 on at least one channel; got max diff {max_diff}"
-        )
+                # (أ) لون خلفية الصف ليس كحلياً مصمتاً (بكسل الزاوية البعيدة عن المؤشر)
+                corner = img.pixelColor(6, 6)
+                assert corner.name().lower() != COLORS["navy"].lower(), (
+                    f"Row background corner must not be navy in {theme} {name}; got {corner.name()}"
+                )
 
-        # التحقق من أن لون الحالة المؤشرة هو لون الهوية الكحلي (#002460)
-        assert c_check.red() < 30 and c_check.blue() > 70, (
-            f"Checked indicator interior should be brand navy, got {c_check.name()}"
-        )
+                # (د) حد التركيز لا يلوّن الصف كله (الزاوية البعيدة لا تأخذ لون التركيز البرتقالي)
+                assert corner.name().lower() != COLORS["orange"].lower(), (
+                    f"Focus border leaked to row corner in {theme} {name}; got {corner.name()}"
+                )
+
+                # (ج) فحص المؤشر: في الحالة المؤشرة يختلف بفارق كبير عن غير المؤشرة
+                dpr = cb.devicePixelRatio()
+                ind_rect = cb.get_indicator_rect()
+                # نأخذ بكسلاً داخلياً في زاوية المؤشر (بعيداً عن خط علامة ✓)
+                x_ind_corner = int((ind_rect.x() + 4) * dpr)
+                y_ind_corner = int((ind_rect.y() + 4) * dpr)
+                ind_col = img.pixelColor(x_ind_corner, y_ind_corner)
+
+                if checked:
+                    # لون المؤشر كحلي الهوية
+                    assert ind_col.name().lower() == COLORS["navy"].lower(), (
+                        f"Checked indicator should be navy in {theme} {name}, got {ind_col.name()}"
+                    )
+                else:
+                    # لون المؤشر أبيض
+                    assert ind_col.name().lower() == "#ffffff", (
+                        f"Unchecked indicator should be white in {theme} {name}, got {ind_col.name()}"
+                    )
 
     def test_cooling_message_single_limit_and_no_nested_parentheses(self, wizard_db, tech1_session, qapp):
         """تصحيح TASK-2.2: رسالة التبريد تذكر الحد مرة واحدة دون تكرار ودون أقواس متداخلة بشهادة 4 وبلا شهادة."""

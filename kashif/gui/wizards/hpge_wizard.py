@@ -13,8 +13,8 @@ import re
 import sqlite3
 from typing import Any, Dict, Optional, Tuple
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QDoubleValidator
+from PyQt6.QtCore import QRect, QSize, Qt, QTimer
+from PyQt6.QtGui import QBrush, QColor, QDoubleValidator, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -78,6 +78,127 @@ def format_bidi_message(text: str) -> str:
     # عزل المعادلات التقنية المفردة مثل v_pos_24=30.00V
     t = re.sub(r"(?<!⁦)([A-Za-z_][A-Za-z0-9_\.]*\s*=\s*[^\s,()]+)(?!⁩)", lambda m: isolate_ltr(m.group(0)), t)
     return format_mixed_text(t)
+
+
+class RampConfirmCheckBox(QCheckBox):
+    """خانة تأكيد مخصصة لمعدل ومصدر رفع الجهد تضمن مؤشراً 20x20 دقيقاً وخلفية متناسقة مع البطاقة."""
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None):
+        super().__init__(text, parent)
+        self.setObjectName("chk_ramp_confirm")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # نمط يضمن خلو الصف من أي إطارات أو خلفيات متسربة، مع تحديد أبعاد المؤشر
+        self.setStyleSheet("""
+            QCheckBox#chk_ramp_confirm {
+                background: transparent;
+                border: none;
+                outline: none;
+                font-weight: bold;
+            }
+            QCheckBox#chk_ramp_confirm:focus {
+                background: transparent;
+                border: none;
+                outline: none;
+            }
+            QCheckBox#chk_ramp_confirm::indicator {
+                width: 20px;
+                height: 20px;
+                border: 2px solid #002460;
+                border-radius: 4px;
+                background-color: #FFFFFF;
+            }
+            QCheckBox#chk_ramp_confirm::indicator:checked {
+                border: 2px solid #002460;
+                background-color: #002460;
+            }
+        """)
+
+    def get_indicator_rect(self) -> QRect:
+        """مستطيل المؤشر 20x20 في موضعه الدقيق وفق اتجاه الواجهة (RTL/LTR)."""
+        w = self.width()
+        h = self.height()
+        size = 20
+        y = (h - size) // 2
+        margin = 4
+        x = (w - size - margin) if self.isRightToLeft() else margin
+        return QRect(x, y, size, size)
+
+    def sizeHint(self) -> QSize:
+        fm = self.fontMetrics()
+        w = 20 + 8 + fm.horizontalAdvance(self.text()) + 16
+        h = max(24, fm.height() + 8)
+        return QSize(w, h)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def get_card_background(self) -> QColor:
+        """استنتاج لون خلفية البطاقة الحاضنة ليتناسق مع الوضع الفاتح أو الداكن."""
+        if self.palette().color(self.foregroundRole()).lightness() > 128:
+            return QColor(COLORS["dark_card"])
+        return QColor(COLORS["light_card"])
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        w = self.width()
+        h = self.height()
+        is_rtl = self.isRightToLeft()
+
+        # 1. تعبئة خلفية الصف بلون البطاقة الحاضنة بدقة
+        bg_card = self.get_card_background()
+        p.fillRect(0, 0, w, h, bg_card)
+
+        ind_rect = self.get_indicator_rect()
+        x = ind_rect.x()
+        y = ind_rect.y()
+        size = ind_rect.width()
+        margin = 4
+
+        navy = QColor(COLORS["navy"])
+        orange = QColor(COLORS["orange"])
+        white = QColor("#FFFFFF")
+
+        has_focus = self.hasFocus()
+        is_checked = self.isChecked()
+
+        # إطار التركيز برتقالي حول المؤشر وحده فقط، وإلا فكحلي
+        border_color = orange if has_focus else navy
+        bg_color = navy if is_checked else white
+
+        # 2. رسم مربع المؤشر 20x20
+        p.setPen(QPen(border_color, 2))
+        p.setBrush(QBrush(bg_color))
+        p.drawRoundedRect(ind_rect, 4, 4)
+
+        # 3. رسم علامة ✓ البيضاء الواضحة داخل المؤشر عند التأشير
+        if is_checked:
+            pen = QPen(white, 2.5)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(pen)
+            p.drawLine(x + 5, y + 10, x + 8, y + 14)
+            p.drawLine(x + 8, y + 14, x + 15, y + 6)
+
+        # 4. رسم النص بلون نص الثيم النشط تلقائياً من الـ palette
+        text_color = self.palette().color(self.foregroundRole())
+        p.setPen(text_color)
+        font = self.font()
+        font.setBold(True)
+        p.setFont(font)
+
+        spacing = 8
+        if is_rtl:
+            text_rect = QRect(margin, 0, w - size - margin * 2 - spacing, h)
+            align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        else:
+            text_rect = QRect(x + size + spacing, 0, w - size - margin * 2 - spacing, h)
+            align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+
+        p.drawText(text_rect, align, self.text())
+        p.end()
 
 
 class HPGeInspectionWizard(QDialog):
@@ -569,39 +690,9 @@ class HPGeInspectionWizard(QDialog):
 
         # خانة تأكيد معدل ومصدر الرفع الصريحة مع لافتة القيم السابقة
         chk_layout = QHBoxLayout()
-        self.chk_ramp_confirm = QCheckBox("أؤكد أن هذا المصدر والمعدل هما ما طُبِّق فعلاً")
+        self.chk_ramp_confirm = RampConfirmCheckBox("أؤكد أن هذا المصدر والمعدل هما ما طُبِّق فعلاً")
         self.chk_ramp_confirm.setObjectName("chk_ramp_confirm")
         self.chk_ramp_confirm.setChecked(False)  # غير مؤكدة دائماً عند الفتح
-        self.chk_ramp_confirm.setStyleSheet(f"""
-            QCheckBox#chk_ramp_confirm {{
-                font-weight: bold;
-                color: {COLORS['light_ink']};
-                spacing: 8px;
-            }}
-            QCheckBox#chk_ramp_confirm::indicator {{
-                width: 20px;
-                height: 20px;
-                border: 2px solid {COLORS['navy']};
-                border-radius: 4px;
-                background-color: {COLORS['light_card']};
-            }}
-            QCheckBox#chk_ramp_confirm::indicator:hover {{
-                border: 2px solid {COLORS['blue']};
-            }}
-            QCheckBox#chk_ramp_confirm::indicator:checked {{
-                border: 2px solid {COLORS['navy']};
-                background-color: {COLORS['navy']};
-            }}
-            QCheckBox#chk_ramp_confirm:focus::indicator,
-            QCheckBox#chk_ramp_confirm::indicator:focus {{
-                border: 2px solid {COLORS['orange']};
-            }}
-            QCheckBox#chk_ramp_confirm:focus::indicator:checked,
-            QCheckBox#chk_ramp_confirm::indicator:checked:focus {{
-                border: 2px solid {COLORS['orange']};
-                background-color: {COLORS['navy']};
-            }}
-        """)
         chk_layout.addWidget(self.chk_ramp_confirm)
 
         self.lbl_ramp_confirm_note = QLabel("")
