@@ -12,9 +12,11 @@ enforce strict RBAC permissions, and write immutable audit log events.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import hashlib
 import json
 import logging
 import math
+import os
 import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Union
@@ -22,11 +24,14 @@ from typing import Any, Dict, List, Optional, Union
 from kashif.core.decay import half_life_to_days
 from kashif.core.models import (
     HPGeDetector,
+    HPGeMeasurement,
+    InspectionStatus,
     Instrument,
     NaIDetector,
     SemiconductorType,
     RadioactiveSource,
     SourceIsotope,
+    Verdict,
 )
 from kashif.services.audit_service import record_audit_event
 from kashif.services.session import Session
@@ -70,6 +75,14 @@ def _map_integrity_error(error: sqlite3.IntegrityError) -> DuplicateEntityError:
         return DuplicateEntityError("رمز النظير المشع مسجل مسبقاً في المنظومة.")
     if "source_isotopes" in msg and "UNIQUE" in msg:
         return DuplicateEntityError("لا يمكن تكرار نفس النظير المشع أكثر من مرة في نفس المصدر.")
+    if "inspections.report_number" in msg:
+        return DuplicateEntityError("رقم تقرير الفحص مسجل مسبقاً في المنظومة.")
+    if "inspection_hpge_measurements.inspection_id" in msg:
+        return DuplicateEntityError("تم إدخال قياسات كاشف الجرمانيوم لهذا الفحص مسبقاً.")
+    if "inspection_instruments" in msg and "UNIQUE" in msg:
+        return DuplicateEntityError("لا يمكن تكرار نفس الجهاز بنفس الدور في نفس الفحص.")
+    if "inspection_sources" in msg and "UNIQUE" in msg:
+        return DuplicateEntityError("لا يمكن تكرار نفس المصدر المشع بنفس الدور في نفس الفحص.")
     if "UNIQUE constraint failed" in msg:
         return DuplicateEntityError("تعذر الحفظ لوجود سجل آخر يحمل نفس البيانات الفريدة.")
     return DuplicateEntityError(f"خطأ في قيود البيانات: {msg}")
@@ -1422,3 +1435,773 @@ def quick_search(conn: sqlite3.Connection, query: str) -> List[Dict[str, Any]]:
 
     cursor.close()
     return results
+
+
+# ---------------------------------------------------------------------------
+# Inspection Repository
+# ---------------------------------------------------------------------------
+
+class InspectionRepository:
+    """مستودع إدارة فحوصات كواشف الجرمانيوم وسجلات القياس والقمم والملحقات."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def _get_inspection_row(self, inspection_id: int) -> sqlite3.Row:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM inspections WHERE id = ?;", (inspection_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise EntityNotFoundError(f"تقرير الفحص رقم {inspection_id} غير موجود في المنظومة.")
+        return row
+
+    def _check_not_approved(self, inspection_id: int) -> sqlite3.Row:
+        row = self._get_inspection_row(inspection_id)
+        if row["status"] == "APPROVED":
+            raise RepositoryError("لا يمكن تعديل فحص معتمد (السجل مجمد نهائياً وفق القاعدة RULE-SEC-03).")
+        return row
+
+    def _check_modifiable_by_owner(self, inspection_id: int, session: Session) -> sqlite3.Row:
+        row = self._check_not_approved(inspection_id)
+        if row["technician_id"] != session.user_id:
+            raise PermissionError("لا يمكن تعديل بيانات الفحص إلا من قبل الفني صاحب الفحص.")
+        return row
+
+    def create_draft(self, detector_id: int, session: Session, inspection_date: Optional[str] = None) -> int:
+        """إنشاء مسودة فحص فني جديدة لكاشف وضمان تسجيل التدقيق."""
+        if not (session.can("conduct_inspection") or session.can("save_draft")):
+            raise PermissionError("المستخدم لا يملك صلاحية إنشاء فحص جديد (conduct_inspection).")
+
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT id FROM detectors WHERE id = ?;", (detector_id,))
+        if not cursor.fetchone():
+            raise EntityNotFoundError(f"الكاشف رقم {detector_id} غير موجود في المنظومة.")
+
+        insp_date = inspection_date or date.today().isoformat()
+        now = _now_iso()
+
+        if not self.conn.in_transaction:
+            try:
+                self.conn.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError:
+                pass
+
+        try:
+            cursor.execute(
+                """
+                INSERT INTO inspections (
+                    detector_id, technician_id, inspection_date, status, created_at, updated_at
+                ) VALUES (?, ?, ?, 'DRAFT', ?, ?);
+                """,
+                (detector_id, session.user_id, insp_date, now, now),
+            )
+            inserted_id = cursor.lastrowid
+
+            record_audit_event(
+                conn=self.conn,
+                action="CREATE",
+                user_id=session.user_id,
+                entity_type="INSPECTION",
+                entity_id=inserted_id,
+                new_value={"detector_id": detector_id, "inspection_date": insp_date, "status": "DRAFT"},
+                commit=False,
+            )
+            self.conn.commit()
+            return inserted_id
+        except sqlite3.IntegrityError as e:
+            self.conn.rollback()
+            raise _map_integrity_error(e) from e
+        except Exception as e:
+            self.conn.rollback()
+            logger.error("Failed to create inspection draft: %s", e)
+            raise
+
+    def get_by_id(self, inspection_id: int) -> Optional[Dict[str, Any]]:
+        """جلب بيانات الفحص الأساسية بمعرف الفحص."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM inspections WHERE id = ?;", (inspection_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_inspection_full(self, inspection_id: int) -> Dict[str, Any]:
+        """جلب تقرير الفحص كاملاً بكافة قياساته وقممه وأجهزته ومصادره ومرفقاته وتاريخ إعادته."""
+        insp_row = self._get_inspection_row(inspection_id)
+        cursor = self.conn.cursor()
+
+        # الكاشف
+        cursor.execute("SELECT * FROM detectors WHERE id = ?;", (insp_row["detector_id"],))
+        det_row = cursor.fetchone()
+
+        # قياسات HPGe
+        cursor.execute("SELECT * FROM inspection_hpge_measurements WHERE inspection_id = ?;", (inspection_id,))
+        hpge_row = cursor.fetchone()
+
+        # القمم
+        cursor.execute("SELECT * FROM inspection_peaks WHERE inspection_id = ? ORDER BY id ASC;", (inspection_id,))
+        peaks = [dict(r) for r in cursor.fetchall()]
+
+        # الأجهزة المستخدمة
+        cursor.execute(
+            """
+            SELECT ii.*, i.instrument_type, i.manufacturer, i.model, i.serial_number, i.cal_expiry
+            FROM inspection_instruments ii
+            JOIN instruments i ON ii.instrument_id = i.id
+            WHERE ii.inspection_id = ?
+            ORDER BY ii.id ASC;
+            """,
+            (inspection_id,),
+        )
+        instruments = [dict(r) for r in cursor.fetchall()]
+
+        # المصادر المستخدمة
+        cursor.execute(
+            """
+            SELECT isrc.*, s.source_code, s.serial_number, s.certificate_number, s.facility_name
+            FROM inspection_sources isrc
+            JOIN sources s ON isrc.source_id = s.id
+            WHERE isrc.inspection_id = ?
+            ORDER BY isrc.id ASC;
+            """,
+            (inspection_id,),
+        )
+        sources = [dict(r) for r in cursor.fetchall()]
+
+        # المرفقات
+        cursor.execute("SELECT * FROM attachments WHERE inspection_id = ? ORDER BY id ASC;", (inspection_id,))
+        attachments = [dict(r) for r in cursor.fetchall()]
+
+        # محاولات الإعادة
+        cursor.execute(
+            """
+            SELECT * FROM measurement_retries
+            WHERE inspection_id = ?
+            ORDER BY stage_number ASC, attempt_number ASC;
+            """,
+            (inspection_id,),
+        )
+        retries = [dict(r) for r in cursor.fetchall()]
+
+        # الفني القائم بالفحص
+        cursor.execute("SELECT id, username, full_name, role FROM users WHERE id = ?;", (insp_row["technician_id"],))
+        tech_row = cursor.fetchone()
+
+        # المعتمد
+        app_row = None
+        if insp_row["approver_id"]:
+            cursor.execute("SELECT id, username, full_name, role FROM users WHERE id = ?;", (insp_row["approver_id"],))
+            app_row = cursor.fetchone()
+
+        return {
+            "inspection": dict(insp_row),
+            "detector": dict(det_row) if det_row else None,
+            "hpge_measurements": dict(hpge_row) if hpge_row else None,
+            "peaks": peaks,
+            "instruments": instruments,
+            "sources": sources,
+            "attachments": attachments,
+            "retries": retries,
+            "technician": dict(tech_row) if tech_row else None,
+            "approver": dict(app_row) if app_row else None,
+        }
+
+    def save_hpge_measurements(
+        self,
+        inspection_id: int,
+        measurements: Union[HPGeMeasurement, Dict[str, Any]],
+        session: Session,
+    ) -> None:
+        """حفظ أو تحديث قياسات فحص كاشف الجرمانيوم مع التحقق من الصلاحيات والتجميد والتدقيق."""
+        if not (session.can("conduct_inspection") or session.can("input_measurements") or session.can("save_draft")):
+            raise PermissionError("المستخدم لا يملك صلاحية حفظ قياسات الفحص.")
+
+        self._check_modifiable_by_owner(inspection_id, session)
+
+        if isinstance(measurements, HPGeMeasurement):
+            data = measurements.model_dump(mode="json")
+        else:
+            data = dict(measurements)
+
+        cooling_hours = data.get("cooling_hours")
+        cryostat_intact = int(bool(data["cryostat_intact"])) if data.get("cryostat_intact") is not None else None
+
+        beryllium_window_status = data.get("beryllium_window_status")
+        if hasattr(beryllium_window_status, "value"):
+            beryllium_window_status = beryllium_window_status.value
+
+        vacuum_intact = int(bool(data["vacuum_intact"])) if data.get("vacuum_intact") is not None else None
+        cryostat_wet_or_frozen = int(bool(data["cryostat_wet_or_frozen"])) if data.get("cryostat_wet_or_frozen") is not None else None
+
+        v_pos_24 = data.get("v_pos_24")
+        v_neg_24 = data.get("v_neg_24")
+        v_pos_12 = data.get("v_pos_12")
+        v_neg_12 = data.get("v_neg_12")
+        v_pos_6 = data.get("v_pos_6")
+        v_neg_6 = data.get("v_neg_6")
+
+        applied_voltage = data.get("applied_voltage")
+        applied_polarity = data.get("applied_polarity")
+        if hasattr(applied_polarity, "value"):
+            applied_polarity = applied_polarity.value
+
+        hv_ramp_source = data.get("hv_ramp_source") or "MANUAL"
+        hv_ramp_rate = data.get("hv_ramp_rate_v_per_s")
+        hv_ramp_rate_v_per_s = float(hv_ramp_rate) if hv_ramp_rate is not None else 10.0
+
+        preamp_type = data.get("preamp_type")
+        if hasattr(preamp_type, "value"):
+            preamp_type = preamp_type.value
+
+        has_preamp_signal = int(bool(data["has_preamp_signal"])) if data.get("has_preamp_signal") is not None else None
+        shaping_time_us = data.get("shaping_time_us")
+        coarse_gain = data.get("coarse_gain")
+        fine_gain = data.get("fine_gain")
+        baseline_restorer = data.get("baseline_restorer")
+        pole_zero_setting = data.get("pole_zero_setting")
+        has_pz_distortion = int(bool(data["has_pz_distortion"])) if data.get("has_pz_distortion") is not None else None
+        amp_output_amplitude = data.get("amp_output_amplitude")
+
+        total_count_rate_cps = data.get("total_count_rate_cps")
+        if total_count_rate_cps is None:
+            total_count_rate_cps = data.get("total_cps")
+
+        dead_time_pct = data.get("dead_time_pct")
+        calibration_slope_m = data.get("calibration_slope_m")
+        calibration_intercept_b = data.get("calibration_intercept_b")
+
+        measured_fwhm_kev = data.get("measured_fwhm_kev")
+        if measured_fwhm_kev is None:
+            measured_fwhm_kev = data.get("fwhm_measured_kev")
+
+        measured_fwtm_kev = data.get("measured_fwtm_kev")
+        if measured_fwtm_kev is None:
+            measured_fwtm_kev = data.get("fwtm_measured_kev")
+
+        form_factor = data.get("form_factor")
+        if form_factor is None:
+            form_factor = data.get("form_factor_measured")
+
+        net_counts_1332 = data.get("net_counts_1332")
+        efficiency_method = data.get("efficiency_method")
+        live_time_sec = data.get("live_time_sec")
+
+        relative_efficiency_pct = data.get("relative_efficiency_pct")
+        if relative_efficiency_pct is None:
+            relative_efficiency_pct = data.get("eff_measured_pct")
+
+        if not self.conn.in_transaction:
+            try:
+                self.conn.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError:
+                pass
+
+        cursor = self.conn.cursor()
+        try:
+            now = _now_iso()
+            cursor.execute("SELECT id FROM inspection_hpge_measurements WHERE inspection_id = ?;", (inspection_id,))
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute(
+                    """
+                    UPDATE inspection_hpge_measurements SET
+                        cooling_hours = ?, cryostat_intact = ?, beryllium_window_status = ?,
+                        vacuum_intact = ?, cryostat_wet_or_frozen = ?,
+                        v_pos_24 = ?, v_neg_24 = ?, v_pos_12 = ?, v_neg_12 = ?,
+                        v_pos_6 = ?, v_neg_6 = ?, applied_voltage = ?, applied_polarity = ?,
+                        hv_ramp_source = ?, hv_ramp_rate_v_per_s = ?, preamp_type = ?,
+                        has_preamp_signal = ?, shaping_time_us = ?, coarse_gain = ?, fine_gain = ?,
+                        baseline_restorer = ?, pole_zero_setting = ?, has_pz_distortion = ?,
+                        amp_output_amplitude = ?, total_count_rate_cps = ?, dead_time_pct = ?,
+                        calibration_slope_m = ?, calibration_intercept_b = ?,
+                        measured_fwhm_kev = ?, measured_fwtm_kev = ?, form_factor = ?,
+                        net_counts_1332 = ?, efficiency_method = ?, live_time_sec = ?,
+                        relative_efficiency_pct = ?, updated_at = ?
+                    WHERE inspection_id = ?;
+                    """,
+                    (
+                        cooling_hours, cryostat_intact, beryllium_window_status,
+                        vacuum_intact, cryostat_wet_or_frozen,
+                        v_pos_24, v_neg_24, v_pos_12, v_neg_12,
+                        v_pos_6, v_neg_6, applied_voltage, applied_polarity,
+                        hv_ramp_source, hv_ramp_rate_v_per_s, preamp_type,
+                        has_preamp_signal, shaping_time_us, coarse_gain, fine_gain,
+                        baseline_restorer, pole_zero_setting, has_pz_distortion,
+                        amp_output_amplitude, total_count_rate_cps, dead_time_pct,
+                        calibration_slope_m, calibration_intercept_b,
+                        measured_fwhm_kev, measured_fwtm_kev, form_factor,
+                        net_counts_1332, efficiency_method, live_time_sec,
+                        relative_efficiency_pct, now, inspection_id,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO inspection_hpge_measurements (
+                        inspection_id, cooling_hours, cryostat_intact, beryllium_window_status,
+                        vacuum_intact, cryostat_wet_or_frozen,
+                        v_pos_24, v_neg_24, v_pos_12, v_neg_12,
+                        v_pos_6, v_neg_6, applied_voltage, applied_polarity,
+                        hv_ramp_source, hv_ramp_rate_v_per_s, preamp_type,
+                        has_preamp_signal, shaping_time_us, coarse_gain, fine_gain,
+                        baseline_restorer, pole_zero_setting, has_pz_distortion,
+                        amp_output_amplitude, total_count_rate_cps, dead_time_pct,
+                        calibration_slope_m, calibration_intercept_b,
+                        measured_fwhm_kev, measured_fwtm_kev, form_factor,
+                        net_counts_1332, efficiency_method, live_time_sec,
+                        relative_efficiency_pct, created_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?,
+                        ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?,
+                        ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?, ?
+                    );
+                    """,
+                    (
+                        inspection_id, cooling_hours, cryostat_intact, beryllium_window_status,
+                        vacuum_intact, cryostat_wet_or_frozen,
+                        v_pos_24, v_neg_24, v_pos_12, v_neg_12,
+                        v_pos_6, v_neg_6, applied_voltage, applied_polarity,
+                        hv_ramp_source, hv_ramp_rate_v_per_s, preamp_type,
+                        has_preamp_signal, shaping_time_us, coarse_gain, fine_gain,
+                        baseline_restorer, pole_zero_setting, has_pz_distortion,
+                        amp_output_amplitude, total_count_rate_cps, dead_time_pct,
+                        calibration_slope_m, calibration_intercept_b,
+                        measured_fwhm_kev, measured_fwtm_kev, form_factor,
+                        net_counts_1332, efficiency_method, live_time_sec,
+                        relative_efficiency_pct, now, now,
+                    ),
+                )
+
+            cursor.execute("UPDATE inspections SET updated_at = ? WHERE id = ?;", (now, inspection_id))
+
+            record_audit_event(
+                conn=self.conn,
+                action="UPDATE",
+                user_id=session.user_id,
+                entity_type="INSPECTION_HPGE_MEASUREMENT",
+                entity_id=inspection_id,
+                new_value=data,
+                commit=False,
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError as e:
+            self.conn.rollback()
+            raise _map_integrity_error(e) from e
+        except Exception as e:
+            self.conn.rollback()
+            logger.error("Failed to save HPGe measurements for inspection %s: %s", inspection_id, e)
+            raise
+
+    def save_peaks(self, inspection_id: int, peaks: List[Dict[str, Any]], session: Session) -> None:
+        """حفظ أو تحديث قائمة القمم لطيف الفحص الفني."""
+        if not (session.can("conduct_inspection") or session.can("input_measurements") or session.can("save_draft")):
+            raise PermissionError("المستخدم لا يملك صلاحية حفظ قمم الفحص.")
+
+        self._check_modifiable_by_owner(inspection_id, session)
+
+        if not self.conn.in_transaction:
+            try:
+                self.conn.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError:
+                pass
+
+        cursor = self.conn.cursor()
+        try:
+            now = _now_iso()
+            cursor.execute("SELECT * FROM inspection_peaks WHERE inspection_id = ?;", (inspection_id,))
+            old_peaks = [dict(r) for r in cursor.fetchall()]
+
+            cursor.execute("DELETE FROM inspection_peaks WHERE inspection_id = ?;", (inspection_id,))
+
+            for p in peaks:
+                cursor.execute(
+                    """
+                    INSERT INTO inspection_peaks (
+                        inspection_id, detector_type, peak_name, energy_reference_kev,
+                        centroid_channel, fwhm_channels, fwhm_kev, fwtm_channels, fwtm_kev,
+                        net_area_counts, live_time_sec, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    (
+                        inspection_id,
+                        p.get("detector_type", "HPGE"),
+                        p["peak_name"],
+                        p["energy_reference_kev"],
+                        p.get("centroid_channel"),
+                        p.get("fwhm_channels"),
+                        p.get("fwhm_kev"),
+                        p.get("fwtm_channels"),
+                        p.get("fwtm_kev"),
+                        p.get("net_area_counts"),
+                        p.get("live_time_sec"),
+                        now,
+                    ),
+                )
+
+            cursor.execute("UPDATE inspections SET updated_at = ? WHERE id = ?;", (now, inspection_id))
+
+            record_audit_event(
+                conn=self.conn,
+                action="UPDATE",
+                user_id=session.user_id,
+                entity_type="INSPECTION_PEAKS",
+                entity_id=inspection_id,
+                old_value=old_peaks,
+                new_value=peaks,
+                commit=False,
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError as e:
+            self.conn.rollback()
+            raise _map_integrity_error(e) from e
+        except Exception as e:
+            self.conn.rollback()
+            logger.error("Failed to save peaks for inspection %s: %s", inspection_id, e)
+            raise
+
+    def link_instruments(self, inspection_id: int, instruments: List[Dict[str, Any]], session: Session) -> None:
+        """ربط أجهزة القياس المستخدمة في الفحص (NIM Bin, HV Supply, Preamp, Amp, MCA)."""
+        if not (session.can("conduct_inspection") or session.can("save_draft")):
+            raise PermissionError("المستخدم لا يملك صلاحية ربط الأجهزة بالفحص.")
+
+        self._check_modifiable_by_owner(inspection_id, session)
+
+        if not self.conn.in_transaction:
+            try:
+                self.conn.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError:
+                pass
+
+        cursor = self.conn.cursor()
+        try:
+            now = _now_iso()
+            cursor.execute("SELECT * FROM inspection_instruments WHERE inspection_id = ?;", (inspection_id,))
+            old_links = [dict(r) for r in cursor.fetchall()]
+
+            cursor.execute("DELETE FROM inspection_instruments WHERE inspection_id = ?;", (inspection_id,))
+
+            for inst in instruments:
+                cursor.execute(
+                    """
+                    INSERT INTO inspection_instruments (
+                        inspection_id, instrument_id, instrument_role, notes, created_at
+                    ) VALUES (?, ?, ?, ?, ?);
+                    """,
+                    (
+                        inspection_id,
+                        inst["instrument_id"],
+                        inst["instrument_role"],
+                        inst.get("notes"),
+                        now,
+                    ),
+                )
+
+            cursor.execute("UPDATE inspections SET updated_at = ? WHERE id = ?;", (now, inspection_id))
+
+            record_audit_event(
+                conn=self.conn,
+                action="UPDATE",
+                user_id=session.user_id,
+                entity_type="INSPECTION_INSTRUMENTS",
+                entity_id=inspection_id,
+                old_value=old_links,
+                new_value=instruments,
+                commit=False,
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError as e:
+            self.conn.rollback()
+            raise _map_integrity_error(e) from e
+        except Exception as e:
+            self.conn.rollback()
+            logger.error("Failed to link instruments for inspection %s: %s", inspection_id, e)
+            raise
+
+    def link_sources(self, inspection_id: int, sources: List[Dict[str, Any]], session: Session) -> None:
+        """ربط المصادر المشعة المستخدمة في الفحص (Co-60, Cs-137)."""
+        if not (session.can("conduct_inspection") or session.can("save_draft")):
+            raise PermissionError("المستخدم لا يملك صلاحية ربط المصادر بالفحص.")
+
+        self._check_modifiable_by_owner(inspection_id, session)
+
+        if not self.conn.in_transaction:
+            try:
+                self.conn.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError:
+                pass
+
+        cursor = self.conn.cursor()
+        try:
+            now = _now_iso()
+            cursor.execute("SELECT * FROM inspection_sources WHERE inspection_id = ?;", (inspection_id,))
+            old_links = [dict(r) for r in cursor.fetchall()]
+
+            cursor.execute("DELETE FROM inspection_sources WHERE inspection_id = ?;", (inspection_id,))
+
+            for src in sources:
+                cursor.execute(
+                    """
+                    INSERT INTO inspection_sources (
+                        inspection_id, source_id, source_role, distance_cm, decay_corrected_activity_bq, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?);
+                    """,
+                    (
+                        inspection_id,
+                        src["source_id"],
+                        src["source_role"],
+                        src.get("distance_cm"),
+                        src.get("decay_corrected_activity_bq"),
+                        now,
+                    ),
+                )
+
+            cursor.execute("UPDATE inspections SET updated_at = ? WHERE id = ?;", (now, inspection_id))
+
+            record_audit_event(
+                conn=self.conn,
+                action="UPDATE",
+                user_id=session.user_id,
+                entity_type="INSPECTION_SOURCES",
+                entity_id=inspection_id,
+                old_value=old_links,
+                new_value=sources,
+                commit=False,
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError as e:
+            self.conn.rollback()
+            raise _map_integrity_error(e) from e
+        except Exception as e:
+            self.conn.rollback()
+            logger.error("Failed to link sources for inspection %s: %s", inspection_id, e)
+            raise
+
+    def add_attachment(
+        self,
+        inspection_id: int,
+        file_path: str,
+        file_type: str,
+        caption: Optional[str],
+        session: Session,
+    ) -> int:
+        """إضافة مرفق تقني للفحص وحساب بصمة SHA-256 للملف."""
+        if not (session.can("conduct_inspection") or session.can("save_draft")):
+            raise PermissionError("المستخدم لا يملك صلاحية إضافة مرفقات للفحص.")
+
+        self._check_modifiable_by_owner(inspection_id, session)
+
+        valid_types = ("PREAMP_WAVEFORM", "AMP_WAVEFORM", "SPECTRUM_PLOT", "OTHER")
+        if file_type not in valid_types:
+            raise ValueError(f"نوع المرفق غير صالح ({file_type}). الأنواع المتاحة: {valid_types}")
+
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"الملف المرفق غير موجود على القرص: {file_path}")
+
+        sha = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                sha.update(chunk)
+        file_hash = sha.hexdigest()
+
+        if not self.conn.in_transaction:
+            try:
+                self.conn.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError:
+                pass
+
+        cursor = self.conn.cursor()
+        try:
+            now = _now_iso()
+            cursor.execute(
+                """
+                INSERT INTO attachments (
+                    inspection_id, file_path, file_hash_sha256, file_type, caption, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?);
+                """,
+                (inspection_id, file_path, file_hash, file_type, caption, now),
+            )
+            att_id = cursor.lastrowid
+            cursor.execute("UPDATE inspections SET updated_at = ? WHERE id = ?;", (now, inspection_id))
+
+            record_audit_event(
+                conn=self.conn,
+                action="CREATE",
+                user_id=session.user_id,
+                entity_type="ATTACHMENT",
+                entity_id=att_id,
+                new_value={
+                    "inspection_id": inspection_id,
+                    "file_path": file_path,
+                    "file_hash_sha256": file_hash,
+                    "file_type": file_type,
+                    "caption": caption,
+                },
+                commit=False,
+            )
+            self.conn.commit()
+            return att_id
+        except sqlite3.IntegrityError as e:
+            self.conn.rollback()
+            raise _map_integrity_error(e) from e
+        except Exception as e:
+            self.conn.rollback()
+            logger.error("Failed to add attachment for inspection %s: %s", inspection_id, e)
+            raise
+
+    def record_retry(
+        self,
+        inspection_id: int,
+        stage_number: int,
+        reason_for_retry: str,
+        corrective_action_taken: str,
+        previous_values: Optional[Any],
+        new_values: Optional[Any],
+        session: Session,
+    ) -> int:
+        """تسجيل محاولة إعادة قياس مرحلة مع حفظ القيم السابقة والجديدة."""
+        if not (session.can("conduct_inspection") or session.can("save_draft")):
+            raise PermissionError("المستخدم لا يملك صلاحية تسجيل محاولة إعادة قياس.")
+
+        self._check_modifiable_by_owner(inspection_id, session)
+
+        prev_json = json.dumps(previous_values, ensure_ascii=False) if previous_values is not None else "{}"
+        new_json = json.dumps(new_values, ensure_ascii=False) if new_values is not None else "{}"
+
+        if not self.conn.in_transaction:
+            try:
+                self.conn.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError:
+                pass
+
+        cursor = self.conn.cursor()
+        try:
+            now = _now_iso()
+            cursor.execute(
+                "SELECT COALESCE(MAX(attempt_number), 0) + 1 FROM measurement_retries WHERE inspection_id = ? AND stage_number = ?;",
+                (inspection_id, stage_number),
+            )
+            attempt_number = cursor.fetchone()[0]
+
+            cursor.execute(
+                """
+                INSERT INTO measurement_retries (
+                    inspection_id, stage_number, attempt_number, reason_for_retry,
+                    corrective_action_taken, previous_values_json, new_values_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    inspection_id,
+                    stage_number,
+                    attempt_number,
+                    reason_for_retry,
+                    corrective_action_taken,
+                    prev_json,
+                    new_json,
+                    now,
+                ),
+            )
+            retry_id = cursor.lastrowid
+            cursor.execute("UPDATE inspections SET updated_at = ? WHERE id = ?;", (now, inspection_id))
+
+            record_audit_event(
+                conn=self.conn,
+                action="CREATE",
+                user_id=session.user_id,
+                entity_type="MEASUREMENT_RETRY",
+                entity_id=retry_id,
+                new_value={
+                    "inspection_id": inspection_id,
+                    "stage_number": stage_number,
+                    "attempt_number": attempt_number,
+                    "reason_for_retry": reason_for_retry,
+                },
+                commit=False,
+            )
+            self.conn.commit()
+            return retry_id
+        except sqlite3.IntegrityError as e:
+            self.conn.rollback()
+            raise _map_integrity_error(e) from e
+        except Exception as e:
+            self.conn.rollback()
+            logger.error("Failed to record retry for inspection %s: %s", inspection_id, e)
+            raise
+
+    def list_by_detector(self, detector_id: int) -> List[Dict[str, Any]]:
+        """جلب جميع الفحوصات الفنية المرتبطة بكاشف محدد، مرتبة من الأحدث إلى الأقدم."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM inspections
+            WHERE detector_id = ?
+            ORDER BY inspection_date DESC, id DESC;
+            """,
+            (detector_id,),
+        )
+        return [dict(r) for r in cursor.fetchall()]
+
+    def update_inspection_record(
+        self,
+        inspection_id: int,
+        updates: Dict[str, Any],
+        session: Session,
+        action: str = "UPDATE",
+    ) -> None:
+        """تحديث حقول الفحص الأساسية وتسجيل الحدث في التدقيق (مخصص لخدمة إدارة دورة الحياة)."""
+        current = self._get_inspection_row(inspection_id)
+        if current["status"] == "APPROVED" and action != "APPROVE":
+            raise RepositoryError("لا يمكن تعديل فحص معتمد (السجل مجمد نهائياً وفق القاعدة RULE-SEC-03).")
+
+        allowed_fields = {
+            "status", "verdict", "report_number", "approver_id",
+            "inspection_date", "rejection_reason", "manager_notes",
+            "technician_signature_token", "manager_signature_token",
+            "approved_at", "superseded_by_id", "snapshot_json",
+        }
+        filtered_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+        if not filtered_updates:
+            return
+
+        now = _now_iso()
+        filtered_updates["updated_at"] = now
+
+        set_clauses = [f"{k} = ?" for k in filtered_updates.keys()]
+        values = list(filtered_updates.values())
+        values.append(inspection_id)
+
+        if not self.conn.in_transaction:
+            try:
+                self.conn.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError:
+                pass
+
+        cursor = self.conn.cursor()
+        try:
+            sql = f"UPDATE inspections SET {', '.join(set_clauses)} WHERE id = ?;"
+            cursor.execute(sql, values)
+
+            record_audit_event(
+                conn=self.conn,
+                action=action,
+                user_id=session.user_id,
+                entity_type="INSPECTION",
+                entity_id=inspection_id,
+                old_value=dict(current),
+                new_value=filtered_updates,
+                commit=False,
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError as e:
+            self.conn.rollback()
+            raise _map_integrity_error(e) from e
+        except Exception as e:
+            self.conn.rollback()
+            logger.error("Failed to update inspection %s: %s", inspection_id, e)
+            raise
