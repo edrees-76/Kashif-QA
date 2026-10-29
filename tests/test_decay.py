@@ -42,14 +42,14 @@ def test_decay_exact_half_life():
     
     خطوات الحساب اليدوي:
     الفعالية الابتدائية A0 = 37,000.0 Bq
-    عمر النصف T_1/2 = 1925.38 يوم
-    الزمن المنقضي t = 1925.38 يوم
-    المعادلة: A(t) = A0 * exp(-ln(2) * 1925.38 / 1925.38)
+    عمر النصف T_1/2 = 1925.269275 يوم
+    الزمن المنقضي t = 1925.269275 يوم
+    المعادلة: A(t) = A0 * exp(-ln(2) * 1925.269275 / 1925.269275)
                    = A0 * exp(-ln(2))
                    = A0 * 0.5
                    = 37000.0 / 2 = 18500.0 Bq بالضبط.
     """
-    a_t = decay_activity_co60(activity_0=37000.0, elapsed_days=1925.38)
+    a_t = decay_activity_co60(activity_0=37000.0, elapsed_days=HALF_LIFE_CO60_DAYS)
     assert pytest.approx(a_t, rel=1e-12) == 18500.0
 
 
@@ -58,10 +58,10 @@ def test_decay_two_half_lives():
     
     خطوات الحساب اليدوي:
     A0 = 37,000.0 Bq
-    t = 2 * 1925.38 = 3850.76 يوم
+    t = 2 * 1925.269275 = 3850.53855 يوم
     A(t) = 37000.0 * (0.5)^2 = 37000.0 / 4 = 9250.0 Bq بالضبط.
     """
-    a_t = decay_activity_co60(activity_0=37000.0, elapsed_days=2 * 1925.38)
+    a_t = decay_activity_co60(activity_0=37000.0, elapsed_days=2 * HALF_LIFE_CO60_DAYS)
     assert pytest.approx(a_t, rel=1e-12) == 9250.0
 
 
@@ -81,19 +81,19 @@ def test_decay_intermediate_time_co60_one_year():
     
     خطوات الحساب اليدوي:
     A0 = 37,000.0 Bq (1 uCi)
-    T_1/2 = 1925.38 يوم
+    T_1/2 = 1925.269275 يوم (5.2711 سنة)
     t = 365.25 يوم
-    ثابت الاضمحلال lambda = ln(2) / 1925.38 = 0.6931471805599453 / 1925.38 = 0.00036000539143387033 day^-1
-    الأس: -lambda * t = -0.00036000539143387033 * 365.25 = -0.13149196922122114
-    معامل الاضمحلال: exp(-0.13149196922122114) = 0.8767852495634151
-    الفعالية المتبقية: 37000.0 * 0.8767852495634151 = 32441.05423384636 Bq
+    ثابت الاضمحلال lambda = ln(2) / 1925.269275 = 0.6931471805599453 / 1925.269275 = 0.0003600260959328227 day^-1
+    الأس: -lambda * t = -0.0003600260959328227 * 365.25 = -0.1314995315394635
+    معامل الاضمحلال: exp(-0.1314995315394635) = 0.8767786228399589
+    الفعالية المتبقية: 37000.0 * 0.8767786228399589 = 32440.80904507848 Bq
     """
-    lambda_val = math.log(2.0) / 1925.38
+    lambda_val = math.log(2.0) / HALF_LIFE_CO60_DAYS
     expected = 37000.0 * math.exp(-lambda_val * 365.25)
     
     res = decay_activity_co60(activity_0=37000.0, elapsed_days=365.25)
     assert pytest.approx(res, rel=1e-9) == expected
-    assert pytest.approx(res, rel=1e-5) == 32441.05
+    assert pytest.approx(res, rel=1e-5) == 32440.81
 
 
 def test_decay_between_dates_cs137():
@@ -103,10 +103,10 @@ def test_decay_between_dates_cs137():
     cert_date = 2024-01-01
     target_date = 2025-01-01 (سنة كبيسة 2024: 366 يوماً)
     A0 = 37,000.0 Bq
-    T_1/2 = 10986.72 يوم
-    lambda = ln(2) / 10986.72 = 6.309044598801968e-5 day^-1
-    exp(-lambda * 366) = exp(-0.023091103231615203) = 0.9771728148386348
-    A(366) = 37000.0 * 0.9771728148386348 = 36155.39414902949 Bq
+    T_1/2 = 10964.0745 يوم (30.018 سنة)
+    lambda = ln(2) / 10964.0745 = 6.322076495393081e-5 day^-1
+    exp(-lambda * 366) = exp(-0.023138799973138676) = 0.9771262143431608
+    A(366) = 37000.0 * 0.9771262143431608 = 36153.67 Bq
     """
     d1 = date(2024, 1, 1)
     d2 = date(2025, 1, 1)
@@ -118,8 +118,9 @@ def test_decay_between_dates_cs137():
         target_date=d2,
         half_life_days=HALF_LIFE_CS137_DAYS,
     )
-    expected = 37000.0 * math.exp(-(math.log(2.0) / 10986.72) * 366)
+    expected = 37000.0 * math.exp(-(math.log(2.0) / HALF_LIFE_CS137_DAYS) * 366)
     assert pytest.approx(res, rel=1e-9) == expected
+    assert pytest.approx(res, rel=1e-5) == 36153.67
 
 
 def test_unit_conversions_exact_standards():
@@ -266,11 +267,11 @@ def test_half_life_units_conversion_and_formatting():
        24 ساعة / 24 ساعة/يوم = 1.0 يوم
        6.0067 ساعة / 24 = 0.2502791666666667 يوم (مثل عمر النصف لـ Tc-99m)
     4) يوم (d):
-       10986.72 يوم * 1.0 = 10986.72 يوم (السيزيوم-137)
+       10964.0745 يوم * 1.0 = 10964.0745 يوم (السيزيوم-137)
     5) سنة (y):
        السنة النووية = 365.25 يوماً بالضبط
-       5.2714 سنة * 365.25 يوم/سنة = 1925.37885 يوم (الكوبالت-60)
-       30.08 سنة * 365.25 يوم/سنة = 10986.72 يوم
+       5.2711 سنة * 365.25 يوم/سنة = 1925.269275 يوم (الكوبالت-60)
+       30.018 سنة * 365.25 يوم/سنة = 10964.0745 يوم (السيزيوم-137)
     """
     from kashif.core.decay import half_life_to_days, format_half_life
 
@@ -287,11 +288,12 @@ def test_half_life_units_conversion_and_formatting():
     assert pytest.approx(half_life_to_days(6.0, "h"), rel=1e-9) == 0.25
 
     # 4. يوم
-    assert half_life_to_days(10986.72, "d") == 10986.72
+    assert half_life_to_days(10964.0745, "d") == 10964.0745
 
     # 5. سنة
     assert half_life_to_days(1.0, "y") == 365.25
-    assert pytest.approx(half_life_to_days(5.2714, "y"), rel=1e-9) == 1925.37885
+    assert pytest.approx(half_life_to_days(5.2711, "y"), rel=1e-9) == 1925.269275
+    assert pytest.approx(half_life_to_days(30.018, "y"), rel=1e-9) == 10964.0745
 
     # Formatting checks
     assert "سنة" in format_half_life(5.27, "y")

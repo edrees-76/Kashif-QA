@@ -464,6 +464,51 @@ def migration_007_lnhb_half_lives(conn: sqlite3.Connection) -> None:
     cursor.close()
 
 
+def migration_008_co60_cs137_lnhb_half_lives(conn: sqlite3.Connection) -> None:
+    """Migration 008: Update Co-60 and Cs-137 with verified official LNHB/DDEP half-lives and uncertainties.
+
+    Source: Official LNHB/DDEP (Laboratoire National Henri Becquerel / Decay Data Evaluation Project)
+    Table de Radionucléides, verified by Project Manager on 2026-10-29.
+    Unit 'a' (annum/year) in LNHB tables corresponds to standard year 'y' (1 y = 365.25 d).
+
+    Radionuclides updated (where is_custom = 0):
+    - Co-60:  5.2711 (8) y, uncertainty = 0.0008 y, https://www.lnhb.fr/nuclides/Co-60_tables.pdf
+    - Cs-137: 30.018 (22) y, uncertainty = 0.022 y, https://www.lnhb.fr/nuclides/Cs-137_tables.pdf
+
+    Unchanged:
+    - All other radionuclides
+    - Custom nuclides (is_custom = 1)
+    - Any source activity records
+    """
+    cursor = conn.cursor()
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    lnhb_updates = [
+        # code, value, unit, uncertainty, url
+        ("Co-60", 5.2711, "y", 0.0008, "https://www.lnhb.fr/nuclides/Co-60_tables.pdf"),
+        ("Cs-137", 30.018, "y", 0.022, "https://www.lnhb.fr/nuclides/Cs-137_tables.pdf"),
+    ]
+
+    for code, val, unit, uncert, url in lnhb_updates:
+        hl_days = half_life_to_days(val, unit)
+        ref_text = f"LNHB/DDEP - Table de Radionucléides ({code})"
+        cursor.execute("""
+        UPDATE nuclides
+        SET half_life_value = ?,
+            half_life_unit = ?,
+            half_life_days = ?,
+            half_life_uncertainty = ?,
+            reference = ?,
+            reference_url = ?,
+            reference_accessed = '2026-10-28',
+            confirmed = 1,
+            updated_at = ?
+        WHERE code = ? AND is_custom = 0;
+        """, (val, unit, hl_days, uncert, ref_text, url, now_str, code))
+
+    cursor.close()
+
+
 # Registry of migrations: version -> (description, migration_function)
 MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     1: ("Initial schema: users, audit_log with hash-chaining triggers, system_settings", migration_001_initial_core_security),
@@ -473,6 +518,7 @@ MIGRATIONS: Dict[int, Tuple[str, Callable[[sqlite3.Connection], None]]] = {
     5: ("HPGe crystal semiconductor type (P/N), certified polarity, ramp limits, and NaI specs", migration_005_hpge_pn_and_detector_specs),
     6: ("Nuclide uncertainties, DDEP references, and Zn-65 verified half-life correction", migration_006_nuclides_uncertainty_and_zn65_ddep),
     7: ("Update verified LNHB/DDEP half-lives and uncertainties for 9 standard gamma radionuclides", migration_007_lnhb_half_lives),
+    8: ("Update verified LNHB/DDEP half-lives and uncertainties for Co-60 and Cs-137", migration_008_co60_cs137_lnhb_half_lives),
 }
 
 

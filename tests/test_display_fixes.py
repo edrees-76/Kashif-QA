@@ -183,10 +183,10 @@ def test_nuclide_detail_card_bidi_quantities(qtbot):
         "nuclide_code": "Co-60",
         "name_ar": "كوبالت-60",
         "name_en": "Cobalt-60",
-        "half_life_value": 5.2714,
+        "half_life_value": 5.2711,
         "half_life_unit": "y",
-        "half_life_days": 1925.28,
-        "half_life_uncertainty": 0.0005,
+        "half_life_days": 1925.269275,
+        "half_life_uncertainty": 0.0008,
         "reference": "LNHB / DDEP",
         "confirmed": 1,
     }
@@ -195,10 +195,10 @@ def test_nuclide_detail_card_bidi_quantities(qtbot):
     dlg.show()
 
     labels = [lbl.text() for lbl in dlg.findChildren(QLabel)]
-    # Half-life should contain isolated "5.2714 y"
-    assert any(f"{LRI}5.2714 y{PDI}" in txt for txt in labels)
-    # Uncertainty should contain isolated "± 0.0005 y"
-    assert any(f"{LRI}± 0.0005 y{PDI}" in txt for txt in labels)
+    # Half-life should contain isolated "5.2711 y"
+    assert any(f"{LRI}5.2711 y{PDI}" in txt for txt in labels)
+    # Uncertainty should contain isolated "± 0.0008 y"
+    assert any(f"{LRI}± 0.0008 y{PDI}" in txt for txt in labels)
 
 
 def test_detector_detail_dialog_bidi_quantities(qtbot):

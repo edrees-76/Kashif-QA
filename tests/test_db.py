@@ -83,7 +83,7 @@ def test_schema_migrations_runner(temp_db_path):
     """TASK-0.3: Migration engine applies Version 1 and records execution in schema_migrations."""
     conn = create_connection(temp_db_path)
     
-    # First run applies migrations 1 through 7
+    # First run applies migrations 1 through 8
     applied = apply_migrations(conn)
     assert 1 in applied
     assert 2 in applied
@@ -92,7 +92,8 @@ def test_schema_migrations_runner(temp_db_path):
     assert 5 in applied
     assert 6 in applied
     assert 7 in applied
-    assert get_applied_migrations(conn) == [1, 2, 3, 4, 5, 6, 7]
+    assert 8 in applied
+    assert get_applied_migrations(conn) == [1, 2, 3, 4, 5, 6, 7, 8]
     
     # Second run is idempotent
     second_run = apply_migrations(conn)
@@ -675,8 +676,9 @@ def test_migration_007_lnhb_half_lives(temp_db_path):
         conn_mig.commit()
 
         # Apply Migration 007
-        newly_applied = apply_migrations(conn_mig)
-        assert newly_applied == [7]
+        migration_007_lnhb_half_lives(conn_mig)
+        conn_mig.execute("INSERT INTO schema_migrations (version, applied_at, description) VALUES (7, datetime('now'), 'migration');")
+        conn_mig.commit()
 
         cur_mig = conn_mig.cursor()
 
@@ -730,9 +732,8 @@ def test_migration_007_lnhb_half_lives(temp_db_path):
             assert row["reference_url"] == f"https://www.lnhb.fr/nuclides/{code}_tables.pdf"
             assert row["reference_accessed"] == "2026-10-28"
 
-        # 5. Idempotent: re-running does nothing and returns empty list
-        re_applied = apply_migrations(conn_mig)
-        assert re_applied == []
+        # 5. Idempotent: re-running migration_007 does nothing
+        migration_007_lnhb_half_lives(conn_mig)
 
         valid_mig, corrupted_mig = verify_audit_chain(conn_mig)
         assert valid_mig is True and corrupted_mig == []
@@ -745,3 +746,167 @@ def test_migration_007_lnhb_half_lives(temp_db_path):
             except OSError:
                 pass
 
+
+
+
+def test_migration_008_co60_cs137_lnhb_half_lives(temp_db_path):
+    """TASK-1.14: Migration 008 updates Co-60 and Cs-137 with verified official LNHB/DDEP data."""
+    from kashif.db.connection import create_connection
+    from kashif.services.audit_service import verify_audit_chain
+    from kashif.db.migrations import (
+        init_migrations_table,
+        apply_migrations,
+        migration_001_initial_core_security,
+        migration_002_user_lockout_and_session,
+        migration_003_registries_detectors_instruments_sources,
+        migration_004_multi_isotope_sources,
+        migration_005_hpge_pn_and_detector_specs,
+        migration_006_nuclides_uncertainty_and_zn65_ddep,
+        migration_007_lnhb_half_lives,
+        migration_008_co60_cs137_lnhb_half_lives,
+    )
+
+    # --- PART A: Test fresh database (001 -> 008) via apply_migrations ---
+    conn_fresh = create_connection(temp_db_path)
+    applied = apply_migrations(conn_fresh)
+    assert 8 in applied, "Migration 008 must be applied on fresh database"
+
+    cursor_fresh = conn_fresh.cursor()
+
+    # Manual calculations verification (1 year = 365.25 days):
+    # Co-60:  5.2711 * 365.25 = 1925.269275 days
+    # Cs-137: 30.018 * 365.25 = 10964.0745 days
+    cursor_fresh.execute("SELECT * FROM nuclides WHERE code = 'Co-60';")
+    co60 = cursor_fresh.fetchone()
+    assert co60["half_life_value"] == 5.2711
+    assert co60["half_life_unit"] == "y"
+    assert math.isclose(co60["half_life_days"], 1925.269275, rel_tol=1e-7)
+    assert co60["half_life_uncertainty"] == 0.0008
+    assert co60["confirmed"] == 1
+    assert co60["reference"] == "LNHB/DDEP - Table de Radionucléides (Co-60)"
+    assert co60["reference_url"] == "https://www.lnhb.fr/nuclides/Co-60_tables.pdf"
+
+    cursor_fresh.execute("SELECT * FROM nuclides WHERE code = 'Cs-137';")
+    cs137 = cursor_fresh.fetchone()
+    assert cs137["half_life_value"] == 30.018
+    assert cs137["half_life_unit"] == "y"
+    assert math.isclose(cs137["half_life_days"], 10964.0745, rel_tol=1e-7)
+    assert cs137["half_life_uncertainty"] == 0.022
+    assert cs137["confirmed"] == 1
+    assert cs137["reference"] == "LNHB/DDEP - Table de Radionucléides (Cs-137)"
+    assert cs137["reference_url"] == "https://www.lnhb.fr/nuclides/Cs-137_tables.pdf"
+
+    # Verify audit chain remains pristine
+    valid_fresh, corrupted_fresh = verify_audit_chain(conn_fresh)
+    assert valid_fresh is True and corrupted_fresh == []
+
+    cursor_fresh.close()
+    conn_fresh.close()
+
+    # --- PART B: Test existing database migrated from 007 -> 008 ---
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+        db_mig_path = tf.name
+
+    try:
+        conn_mig = create_connection(db_mig_path)
+        init_migrations_table(conn_mig)
+        migration_001_initial_core_security(conn_mig)
+        migration_002_user_lockout_and_session(conn_mig)
+        migration_003_registries_detectors_instruments_sources(conn_mig)
+        migration_004_multi_isotope_sources(conn_mig)
+        migration_005_hpge_pn_and_detector_specs(conn_mig)
+        migration_006_nuclides_uncertainty_and_zn65_ddep(conn_mig)
+        migration_007_lnhb_half_lives(conn_mig)
+
+        for v in range(1, 8):
+            conn_mig.execute("INSERT INTO schema_migrations (version, applied_at, description) VALUES (?, datetime('now'), 'migration');", (v,))
+        conn_mig.commit()
+
+        # Insert custom nuclide before 008
+        conn_mig.execute("""
+            INSERT INTO nuclides (
+                code, name_ar, name_en, half_life_days, half_life_value,
+                half_life_unit, half_life_uncertainty, confirmed, reference, is_custom, created_at, updated_at
+            ) VALUES (
+                'Custom-99', 'مخصص-99', 'Custom-99', 88.0, 88.0,
+                'd', 0.05, 0, 'Lab Internal SOP-99', 1, '2025-01-01T00:00:00', '2025-01-01T00:00:00'
+            );
+        """)
+        conn_mig.commit()
+
+        # Apply Migration 008 via apply_migrations
+        newly_applied = apply_migrations(conn_mig)
+        assert newly_applied == [8]
+
+        cur_mig = conn_mig.cursor()
+
+        # 1. Custom nuclide was NOT touched
+        cur_mig.execute("SELECT * FROM nuclides WHERE code = 'Custom-99';")
+        custom_row = cur_mig.fetchone()
+        assert custom_row is not None
+        assert custom_row["half_life_days"] == 88.0
+        assert custom_row["reference"] == "Lab Internal SOP-99"
+        assert custom_row["is_custom"] == 1
+        assert custom_row["confirmed"] == 0
+
+        # 2. Co-60 and Cs-137 updated correctly
+        cur_mig.execute("SELECT * FROM nuclides WHERE code = 'Co-60';")
+        co60_row = cur_mig.fetchone()
+        assert co60_row["half_life_value"] == 5.2711
+        assert co60_row["half_life_unit"] == "y"
+        assert math.isclose(co60_row["half_life_days"], 1925.269275, rel_tol=1e-7)
+        assert co60_row["half_life_uncertainty"] == 0.0008
+        assert co60_row["confirmed"] == 1
+        assert co60_row["reference"] == "LNHB/DDEP - Table de Radionucléides (Co-60)"
+        assert co60_row["reference_url"] == "https://www.lnhb.fr/nuclides/Co-60_tables.pdf"
+
+        cur_mig.execute("SELECT * FROM nuclides WHERE code = 'Cs-137';")
+        cs137_row = cur_mig.fetchone()
+        assert cs137_row["half_life_value"] == 30.018
+        assert cs137_row["half_life_unit"] == "y"
+        assert math.isclose(cs137_row["half_life_days"], 10964.0745, rel_tol=1e-7)
+        assert cs137_row["half_life_uncertainty"] == 0.022
+        assert cs137_row["confirmed"] == 1
+        assert cs137_row["reference"] == "LNHB/DDEP - Table de Radionucléides (Cs-137)"
+        assert cs137_row["reference_url"] == "https://www.lnhb.fr/nuclides/Cs-137_tables.pdf"
+
+        # 3. Other radionuclides were NOT touched
+        other_nuclides = {
+            "Am-241": (432.6, 0.6),
+            "Ba-133": (10.539, 0.006),
+            "Cd-109": (461.9, 0.4),
+            "Co-57":  (271.81, 0.04),
+            "Eu-152": (13.522, 0.016),
+            "Mn-54":  (312.19, 0.03),
+            "Na-22":  (2.6029, 0.0008),
+            "Y-88":   (106.63, 0.05),
+            "Ra-226": (1600.0, 7.0),
+            "Zn-65":  (244.01, 0.09),
+        }
+        for code, (expected_val, expected_uncert) in other_nuclides.items():
+            cur_mig.execute("SELECT half_life_value, half_life_uncertainty FROM nuclides WHERE code = ?;", (code,))
+            row = cur_mig.fetchone()
+            assert row["half_life_value"] == expected_val, f"Nuclide {code} value changed"
+            assert row["half_life_uncertainty"] == expected_uncert, f"Nuclide {code} uncertainty changed"
+
+        # 4. Idempotent: re-running does nothing and returns empty list
+        re_applied = apply_migrations(conn_mig)
+        assert re_applied == []
+
+        # Calling function directly is also safe and idempotent
+        migration_008_co60_cs137_lnhb_half_lives(conn_mig)
+
+        cur_mig.execute("SELECT half_life_value FROM nuclides WHERE code = 'Co-60';")
+        assert cur_mig.fetchone()["half_life_value"] == 5.2711
+
+        valid_mig, corrupted_mig = verify_audit_chain(conn_mig)
+        assert valid_mig is True and corrupted_mig == []
+        cur_mig.close()
+        conn_mig.close()
+    finally:
+        if os.path.exists(db_mig_path):
+            try:
+                os.remove(db_mig_path)
+            except OSError:
+                pass
