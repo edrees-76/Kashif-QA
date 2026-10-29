@@ -2,7 +2,16 @@
 
 from typing import Optional
 from PyQt6.QtCore import Qt, QPoint, QObject, QEvent, QTimer, QRect, QSize
-from PyQt6.QtWidgets import QDialog, QDateEdit, QApplication, QScrollArea, QFrame, QPushButton, QWidget
+from PyQt6.QtWidgets import (
+    QDialog,
+    QDateEdit,
+    QApplication,
+    QScrollArea,
+    QFrame,
+    QPushButton,
+    QWidget,
+    QSizePolicy,
+)
 
 
 def enable_dialog_window_controls(
@@ -42,6 +51,49 @@ class ResponsiveButtonContainer(QWidget):
         return QSize(self.target_width, h if h > 0 else 36)
 
 
+class ResponsiveDialogFilter(QObject):
+    """Event filter that dynamically adjusts dialog layout margins so that content
+    expands up to max_content_width on wide displays while remaining centered horizontally,
+    without shrinking below its natural size on smaller screens."""
+
+    def __init__(self, dialog: QDialog, max_content_width: int = 1000):
+        super().__init__(dialog)
+        self.dialog = dialog
+        self.max_content_width = max_content_width
+        layout = dialog.layout()
+        if layout:
+            m = layout.contentsMargins()
+            self.base_left = m.left()
+            self.base_top = m.top()
+            self.base_right = m.right()
+            self.base_bottom = m.bottom()
+        else:
+            self.base_left = self.base_top = self.base_right = self.base_bottom = 20
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self.update_margins()
+        return super().eventFilter(obj, event)
+
+    def update_margins(self) -> None:
+        layout = self.dialog.layout()
+        if not layout:
+            return
+        w = self.dialog.width()
+        total_base = self.base_left + self.base_right
+        if w > self.max_content_width + total_base:
+            extra = w - self.max_content_width
+            m_left = extra // 2
+            m_right = extra - m_left
+            new_margins = (m_left, self.base_top, m_right, self.base_bottom)
+        else:
+            new_margins = (self.base_left, self.base_top, self.base_right, self.base_bottom)
+        cur = layout.contentsMargins()
+        if (cur.left(), cur.top(), cur.right(), cur.bottom()) != new_margins:
+            layout.setContentsMargins(*new_margins)
+            layout.activate()
+
+
 def constrain_dialog_content_width(dialog: QDialog, max_content_width: int = 1000) -> None:
     """Constrain dialog content/form width and center it so fields do not stretch excessively on large screens.
     
@@ -55,12 +107,30 @@ def constrain_dialog_content_width(dialog: QDialog, max_content_width: int = 100
             widget = sa.widget()
             if widget:
                 widget.setMaximumWidth(max_content_width)
+                widget.setSizePolicy(
+                    QSizePolicy.Policy.Expanding,
+                    widget.sizePolicy().verticalPolicy(),
+                )
     else:
+        existing_filters = [c for c in dialog.children() if isinstance(c, ResponsiveDialogFilter)]
+        if existing_filters:
+            rf = existing_filters[0]
+            rf.max_content_width = max_content_width
+            rf.update_margins()
+        else:
+            rf = ResponsiveDialogFilter(dialog, max_content_width=max_content_width)
+            dialog.installEventFilter(rf)
+            rf.update_margins()
+
+        d_layout = dialog.layout()
         for frame in dialog.findChildren(QFrame):
             if frame.parent() == dialog:
-                frame.setMaximumWidth(max_content_width)
-                if dialog.layout():
-                    dialog.layout().setAlignment(frame, Qt.AlignmentFlag.AlignHCenter)
+                frame.setSizePolicy(
+                    QSizePolicy.Policy.Expanding,
+                    frame.sizePolicy().verticalPolicy(),
+                )
+                if d_layout:
+                    d_layout.setAlignment(frame, Qt.AlignmentFlag(0))
 
     d_layout = dialog.layout()
     if d_layout:
@@ -128,6 +198,9 @@ def adjust_dialog_size_to_screen(
     target_h = max(dialog.minimumHeight(), min(cur_h if cur_h > 0 else 700, max_h))
 
     dialog.resize(target_w, target_h)
+    for c in dialog.children():
+        if isinstance(c, ResponsiveDialogFilter):
+            c.update_margins()
 
 
 class CalendarPopupEventFilter(QObject):
