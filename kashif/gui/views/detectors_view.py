@@ -505,9 +505,18 @@ class AddEditDetectorDialog(QDialog):
 class DetectorDetailDialog(QDialog):
     """Dialog displaying complete detector specifications."""
 
-    def __init__(self, data: Dict[str, Any], parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        data: Dict[str, Any],
+        session: Optional[Session] = None,
+        conn: Optional[sqlite3.Connection] = None,
+        parent: Optional[QWidget] = None,
+    ):
         super().__init__(parent)
         self.data = data
+        self.session = session
+        self.conn = conn
+        self.btn_start_inspection: Optional[QPushButton] = None
         self.setWindowTitle(f"بطاقة الكاشف الفنية — {data.get('code')}")
         self.setMinimumWidth(500)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -565,7 +574,7 @@ class DetectorDetailDialog(QDialog):
             form.addRow("زمن التبريد الأدنى:", QLabel(format_mixed_text(cooling_txt)))
 
             ramp = d.get("hv_ramp_max_v_per_s") if d.get("hv_ramp_max_v_per_s") is not None else 10.0
-            ramp_ref = d.get("hv_ramp_reference") or "دليل عام"
+            ramp_ref = d.get("hv_ramp_reference") or "غير محدد في بطاقة الكاشف"
             ramp_str = isolate_quantity(ramp, "V/s")
             form.addRow("أقصى معدل رفع جهد:", QLabel(f"{ramp_str} (مرجع: {ramp_ref})"))
 
@@ -590,10 +599,42 @@ class DetectorDetailDialog(QDialog):
         self.scroll_area.setWidget(card)
         root_layout.addWidget(self.scroll_area, 1)
 
+        btn_row = QHBoxLayout()
         btn_close = QPushButton("إغلاق")
         btn_close.setProperty("class", "secondary")
         btn_close.clicked.connect(self.accept)
-        root_layout.addWidget(btn_close)
+        btn_row.addWidget(btn_close)
+
+        # زر "بدء فحص" يظهر لكواشف HPGe فقط وللمستخدم الذي يملك conduct_inspection أو save_draft
+        can_inspect = bool(
+            self.session and (self.session.can("conduct_inspection") or self.session.can("save_draft"))
+        )
+        if self.data.get("detector_type") == "HPGE" and can_inspect:
+            self.btn_start_inspection = QPushButton("⚡ بدء فحص")
+            self.btn_start_inspection.setObjectName("btn_start_inspection")
+            self.btn_start_inspection.clicked.connect(self._on_start_inspection)
+            btn_row.addWidget(self.btn_start_inspection)
+
+        root_layout.addLayout(btn_row)
+
+    def _on_start_inspection(self) -> None:
+        if not self.conn or not self.session:
+            return
+        from kashif.services.inspection_service import InspectionService
+        from kashif.gui.wizards.hpge_wizard import HPGeInspectionWizard
+        try:
+            service = InspectionService(self.conn)
+            insp_id = service.create_draft(detector_id=self.data["id"], session=self.session)
+            wizard = HPGeInspectionWizard(
+                conn=self.conn,
+                session=self.session,
+                inspection_id=insp_id,
+                service=service,
+                parent=self,
+            )
+            wizard.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ في بدء الفحص", f"تعذر إنشاء مسودة الفحص الفني:\n{str(e)}")
 
 
 class DetectorsView(QWidget):
@@ -779,7 +820,7 @@ class DetectorsView(QWidget):
             return
         data = self.repo.get_by_id(det_id)
         if data:
-            dlg = DetectorDetailDialog(data=data, parent=self)
+            dlg = DetectorDetailDialog(data=data, session=self.session, conn=self.conn, parent=self)
             _exec_dlg(dlg)
 
     def _on_retire_detector(self) -> None:
