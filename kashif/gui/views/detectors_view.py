@@ -24,6 +24,8 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QRadioButton,
@@ -37,6 +39,7 @@ from PyQt6.QtWidgets import (
 from kashif.gui.dialog_utils import (
     enable_dialog_window_controls,
     adjust_dialog_size_to_screen,
+    format_utc_to_local,
 )
 
 from kashif.core.models import (
@@ -61,7 +64,7 @@ from kashif.gui.bidi import (
     isolate_ltr,
     isolate_quantity,
 )
-from kashif.gui.theme import get_stylesheet
+from kashif.gui.theme import COLORS, get_mode, get_stylesheet
 from kashif.services.session import Session
 
 
@@ -502,6 +505,214 @@ class AddEditDetectorDialog(QDialog):
             self.lbl_error.setText(f"تعذر الحفظ: {str(e)}")
 
 
+class InspectionResumeDialog(QDialog):
+    """حوار اختيار استئناف مسودة فحص فني مفتوحة أو بدء فحص جديد للكاشف."""
+
+    RESUME = 1
+    NEW_INSPECTION = 2
+    CANCEL = 0
+
+    def __init__(
+        self,
+        drafts: List[Dict[str, Any]],
+        parent: Optional[QWidget] = None,
+    ):
+        super().__init__(parent)
+        # القائمة مرتبة من الأحدث إلى الأقدم استناداً إلى آخر تحديث ثم معرف الفحص
+        self.drafts = sorted(
+            drafts,
+            key=lambda d: (d.get("updated_at") or d.get("created_at") or "", d.get("id") or 0),
+            reverse=True,
+        )
+        self.selected_inspection_id: Optional[int] = None
+        self.setWindowTitle("لديك مسودة فحص مفتوحة لهذا الكاشف")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        enable_dialog_window_controls(self)
+        self._init_ui()
+        self._apply_theme_style()
+        adjust_dialog_size_to_screen(self, preferred_width=520, preferred_height=360)
+
+    def _apply_theme_style(self) -> None:
+        mode = get_mode()
+        base_css = get_stylesheet(mode)
+        if mode == "dark":
+            custom_list = f"""
+                QListWidget {{
+                    background-color: {COLORS['dark_card']};
+                    color: {COLORS['dark_ink']};
+                    border: 1px solid {COLORS['dark_line']};
+                    border-radius: 8px;
+                    padding: 4px;
+                    font-size: 13px;
+                }}
+                QListWidget::item {{
+                    padding: 10px 14px;
+                    border-radius: 6px;
+                }}
+                QListWidget::item:selected {{
+                    background-color: {COLORS['blue']};
+                    color: {COLORS['dark_ink']};
+                }}
+                QListWidget::item:hover {{
+                    background-color: {COLORS['dark_surface']};
+                }}
+            """
+        else:
+            custom_list = f"""
+                QListWidget {{
+                    background-color: {COLORS['light_card']};
+                    color: {COLORS['light_ink']};
+                    border: 1px solid {COLORS['light_line']};
+                    border-radius: 8px;
+                    padding: 4px;
+                    font-size: 13px;
+                }}
+                QListWidget::item {{
+                    padding: 10px 14px;
+                    border-radius: 6px;
+                }}
+                QListWidget::item:selected {{
+                    background-color: {COLORS['light_mist']};
+                    color: {COLORS['navy']};
+                }}
+                QListWidget::item:hover {{
+                    background-color: {COLORS['light_surface']};
+                }}
+            """
+        super().setStyleSheet(base_css + "\n" + custom_list)
+
+    def setStyleSheet(self, styleSheet: str) -> None:
+        mode = get_mode()
+        if mode == "dark":
+            custom_list = f"""
+                QListWidget {{
+                    background-color: {COLORS['dark_card']};
+                    color: {COLORS['dark_ink']};
+                    border: 1px solid {COLORS['dark_line']};
+                    border-radius: 8px;
+                    padding: 4px;
+                    font-size: 13px;
+                }}
+                QListWidget::item {{
+                    padding: 10px 14px;
+                    border-radius: 6px;
+                }}
+                QListWidget::item:selected {{
+                    background-color: {COLORS['blue']};
+                    color: {COLORS['dark_ink']};
+                }}
+                QListWidget::item:hover {{
+                    background-color: {COLORS['dark_surface']};
+                }}
+            """
+        else:
+            custom_list = f"""
+                QListWidget {{
+                    background-color: {COLORS['light_card']};
+                    color: {COLORS['light_ink']};
+                    border: 1px solid {COLORS['light_line']};
+                    border-radius: 8px;
+                    padding: 4px;
+                    font-size: 13px;
+                }}
+                QListWidget::item {{
+                    padding: 10px 14px;
+                    border-radius: 6px;
+                }}
+                QListWidget::item:selected {{
+                    background-color: {COLORS['light_mist']};
+                    color: {COLORS['navy']};
+                }}
+                QListWidget::item:hover {{
+                    background-color: {COLORS['light_surface']};
+                }}
+            """
+        super().setStyleSheet(styleSheet + "\n" + custom_list)
+
+    def _init_ui(self) -> None:
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 20, 20, 20)
+        root_layout.setSpacing(14)
+
+        # Title
+        self.lbl_title = QLabel("لديك مسودة فحص مفتوحة لهذا الكاشف")
+        self.lbl_title.setObjectName("lbl_resume_dialog_title")
+        self.lbl_title.setProperty("class", "title")
+        root_layout.addWidget(self.lbl_title)
+
+        # Hint subtitle
+        self.lbl_subtitle = QLabel("يمكنك اختيار مسودة سابقة لمتابعتها أو بدء فحص فني جديد تماماً:")
+        self.lbl_subtitle.setObjectName("lbl_resume_dialog_subtitle")
+        self.lbl_subtitle.setProperty("class", "subtitle")
+        root_layout.addWidget(self.lbl_subtitle)
+
+        # List of drafts
+        self.list_drafts = QListWidget(self)
+        self.list_drafts.setObjectName("list_drafts")
+        for draft in self.drafts:
+            insp_id = draft["id"]
+            updated_raw = draft.get("updated_at") or draft.get("created_at")
+            updated_str = format_utc_to_local(updated_raw)
+            rep_num = draft.get("report_number")
+            if rep_num:
+                num_label = f"{isolate_ltr(str(rep_num))} ({isolate_ltr(f'#{insp_id}')})"
+            else:
+                num_label = isolate_ltr(str(insp_id))
+            item_text = f"رقم الفحص: {num_label} — آخر تحديث: {updated_str}"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.ItemDataRole.UserRole, insp_id)
+            self.list_drafts.addItem(item)
+
+        # المحدد افتراضياً أحدثها
+        if self.list_drafts.count() > 0:
+            self.list_drafts.setCurrentRow(0)
+
+        self.list_drafts.itemDoubleClicked.connect(lambda _: self._on_resume())
+        root_layout.addWidget(self.list_drafts, stretch=1)
+
+        # Action buttons row: متابعة المسودة المحددة (الأساسي)، فحص جديد، إلغاء
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self.btn_resume = QPushButton("متابعة المسودة المحددة")
+        self.btn_resume.setObjectName("btn_resume")
+        self.btn_resume.setDefault(True)
+        self.btn_resume.clicked.connect(self._on_resume)
+        btn_row.addWidget(self.btn_resume)
+
+        self.btn_new = QPushButton("فحص جديد")
+        self.btn_new.setObjectName("btn_new_inspection")
+        self.btn_new.setProperty("class", "secondary")
+        self.btn_new.clicked.connect(self._on_new)
+        btn_row.addWidget(self.btn_new)
+
+        self.btn_cancel = QPushButton("إلغاء")
+        self.btn_cancel.setObjectName("btn_cancel")
+        self.btn_cancel.setProperty("class", "secondary")
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(self.btn_cancel)
+
+        self.list_drafts.currentItemChanged.connect(
+            lambda cur, prev: self.btn_resume.setEnabled(cur is not None)
+        )
+
+        root_layout.addLayout(btn_row)
+
+    def _on_resume(self) -> None:
+        item = self.list_drafts.currentItem()
+        if item:
+            self.selected_inspection_id = item.data(Qt.ItemDataRole.UserRole)
+            self.done(self.RESUME)
+
+    def _on_new(self) -> None:
+        self.selected_inspection_id = None
+        self.done(self.NEW_INSPECTION)
+
+    def reject(self) -> None:
+        self.selected_inspection_id = None
+        super().reject()
+
+
 class DetectorDetailDialog(QDialog):
     """Dialog displaying complete detector specifications."""
 
@@ -624,15 +835,36 @@ class DetectorDetailDialog(QDialog):
         from kashif.gui.wizards.hpge_wizard import HPGeInspectionWizard
         try:
             service = InspectionService(self.conn)
-            insp_id = service.create_draft(detector_id=self.data["id"], session=self.session)
-            wizard = HPGeInspectionWizard(
-                conn=self.conn,
-                session=self.session,
-                inspection_id=insp_id,
-                service=service,
-                parent=self,
-            )
-            wizard.exec()
+            detector_id = self.data["id"]
+            all_inspections = service.list_by_detector(detector_id)
+            drafts = [
+                insp
+                for insp in all_inspections
+                if insp.get("status") == "DRAFT" and insp.get("technician_id") == self.session.user_id
+            ]
+
+            target_inspection_id: Optional[int] = None
+            if not drafts:
+                target_inspection_id = service.create_draft(detector_id=detector_id, session=self.session)
+            else:
+                dlg = InspectionResumeDialog(drafts=drafts, parent=self)
+                ret = dlg.exec()
+                if ret == InspectionResumeDialog.RESUME:
+                    target_inspection_id = dlg.selected_inspection_id
+                elif ret == InspectionResumeDialog.NEW_INSPECTION:
+                    target_inspection_id = service.create_draft(detector_id=detector_id, session=self.session)
+                else:
+                    return
+
+            if target_inspection_id is not None:
+                wizard = HPGeInspectionWizard(
+                    conn=self.conn,
+                    session=self.session,
+                    inspection_id=target_inspection_id,
+                    service=service,
+                    parent=self,
+                )
+                wizard.exec()
         except Exception as e:
             QMessageBox.critical(self, "خطأ في بدء الفحص", f"تعذر إنشاء مسودة الفحص الفني:\n{str(e)}")
 
