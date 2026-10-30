@@ -121,6 +121,50 @@ def admin_session():
 # Tests for HPGeInspectionWizard
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Helpers for Steps 1-4 Filling
+# ---------------------------------------------------------------------------
+
+def _fill_step_1_valid(wizard: HPGeInspectionWizard) -> None:
+    wizard.combo_window_status.setCurrentIndex(1)  # INTACT
+    wizard.edit_cooling_hours.setText("7.0")
+    wizard.combo_vacuum_intact.setCurrentIndex(1)  # سليم 1
+    wizard.combo_wet_frozen.setCurrentIndex(2)  # لا يوجد رطوبة 0
+
+def _fill_step_2_valid(wizard: HPGeInspectionWizard) -> None:
+    wizard.edit_v_pos_24.setText("24.0")
+    wizard.edit_v_neg_24.setText("-24.0")
+    wizard.edit_v_pos_12.setText("12.0")
+    wizard.edit_v_neg_12.setText("-12.0")
+    wizard.combo_applied_polarity.setCurrentIndex(1)  # POSITIVE
+    wizard.edit_applied_voltage.setText("3000.0")
+    wizard.combo_ramp_source.setCurrentIndex(1)  # MANUAL
+    wizard.edit_ramp_rate.setText("8.0")
+    wizard.chk_ramp_confirm.setChecked(True)
+    wizard.combo_preamp_signal.setCurrentIndex(1)  # سليم 1
+
+def _fill_step_3_valid(wizard: HPGeInspectionWizard) -> None:
+    wizard.edit_shaping_time.setText("4.0")
+    wizard.edit_coarse_gain.setText("50.0")
+    wizard.edit_fine_gain.setText("1.0")
+    wizard.edit_baseline_restorer.setText("AUTO")
+    wizard.edit_pole_zero_setting.setText("OPTIMIZED")
+    wizard.edit_amp_output_amplitude.setText("5.0")
+    wizard.combo_pz_distortion.setCurrentIndex(1)  # لا يوجد تشوه (0)
+
+def _fill_step_4_valid(wizard: HPGeInspectionWizard) -> None:
+    wizard.edit_total_count_rate_cps.setText("1200.0")
+    wizard.edit_dead_time_pct.setText("3.0")
+    wizard.edit_live_time_sec.setText("300.0")
+    wizard.edit_p1_centroid.setText("2346.4")
+    wizard.edit_p1_fwhm_ch.setText("3.60")
+    wizard.edit_p1_fwtm_ch.setText("6.65")
+    wizard.edit_p1_net_area.setText("15000.0")
+    wizard.edit_p2_centroid.setText("2665.0")
+    wizard.edit_p2_fwhm_ch.setText("3.70")
+    wizard.edit_p2_fwtm_ch.setText("6.85")
+    wizard.edit_p2_net_area.setText("12500.0")
+
 class TestHPGeInspectionWizard:
     """مجموعة اختبارات معالج فحص كواشف HPGe والخطوتين 1 و2."""
 
@@ -482,29 +526,19 @@ class TestHPGeInspectionWizard:
         dlg_no_perm = DetectorDetailDialog(data=hpge_det, session=user_no_perm, conn=wizard_db)
         assert dlg_no_perm.btn_start_inspection is None
 
-    def test_steps_3_to_5_placeholders_prevent_submission(self, wizard_db, tech1_session, qapp):
-        """الخطوات 3 إلى 5 صفحات فارغة معلَّمة 'قيد التطوير' ولا تسمح بالإنهاء أو التقديم."""
+    def test_step_5_placeholder_prevents_submission(self, wizard_db, tech1_session, qapp):
+        """الخطوة 5 صفحة فارغة معلَّمة 'قيد التطوير' ولا تسمح بالإنهاء أو التقديم في هذه المهمة."""
         service = InspectionService(wizard_db)
         insp_id = service.create_draft(detector_id=1, session=tech1_session)
         wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
 
-        # الانتقال للخطوة 3 و4 و5
-        wizard.stack.setCurrentIndex(2)  # الخطوة 3
-        lbl_p3 = wizard.findChild(QLabel, "lbl_placeholder_step_3")
-        assert lbl_p3 is not None
-        assert "قيد التطوير (TASK-2.3)" in lbl_p3.text()
-
-        wizard.stack.setCurrentIndex(3)  # الخطوة 4
-        lbl_p4 = wizard.findChild(QLabel, "lbl_placeholder_step_4")
-        assert lbl_p4 is not None
-        assert "قيد التطوير (TASK-2.3)" in lbl_p4.text()
-
+        # التحقق من أن الخطوة 5 صفحة قيد التطوير
         wizard.stack.setCurrentIndex(4)  # الخطوة 5
         lbl_p5 = wizard.findChild(QLabel, "lbl_placeholder_step_5")
         assert lbl_p5 is not None
-        assert "قيد التطوير (TASK-2.3)" in lbl_p5.text()
+        assert "قيد التطوير" in lbl_p5.text()
 
-        # زر التالي معطل في الخطوة الأخيرة ولا يوجد زر إنهاء
+        # زر التالي معطل في الخطوة 5 ولا يوجد زر إنهاء
         wizard._update_navigation_state()
         assert wizard.btn_next.isEnabled() is False
         assert "قيد التطوير" in wizard.btn_next.text()
@@ -718,35 +752,64 @@ class TestHPGeInspectionWizard:
         assert ok is False
         assert "1.00" in msg
 
-    def test_save_draft_rejects_invalid_numeric_text(self, wizard_db, tech1_session, qapp):
-        """تصحيح TASK-2.2 (5): save_draft لا يتجاهل نصاً رقمياً غير صالح بصمت ويظهر خطأ ولا يحفظ."""
+    def test_save_draft_rejects_invalid_numeric_text(self, wizard_db, tech1_session, monkeypatch, qapp):
+        """تصحيح TASK-2.2 (5) وتصحيح TASK-2.3a (1): save_draft لا يتجاهل نصاً غير صالح، يظهر QMessageBox.warning بعنوان تنبيه قبل المتابعة ولا يمرر أخطاء عبر lbl_feedback."""
         service = InspectionService(wizard_db)
         insp_id = service.create_draft(detector_id=1, session=tech1_session)
         wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+        wizard.show()
+        qapp.processEvents()
 
-        # 1. نص غير صالح في مدة التبريد
+        warnings_called = []
+        def fake_warning(parent, title, text, *args, **kwargs):
+            warnings_called.append((title, text))
+            return QMessageBox.StandardButton.Ok
+        monkeypatch.setattr(QMessageBox, "warning", fake_warning)
+
+        # 1. نص غير صالح في مدة التبريد مع show_feedback=True
         wizard.edit_cooling_hours.setText("abc_not_number")
-        ok1 = wizard.save_draft(show_feedback=False)
+        ok1 = wizard.save_draft(show_feedback=True)
         assert ok1 is False
-        assert "مدة التبريد" in wizard.lbl_feedback.text()
+        assert len(warnings_called) == 1
+        assert warnings_called[0][0] == "تنبيه قبل المتابعة"
+        assert "مدة التبريد" in warnings_called[0][1]
+        assert wizard.edit_cooling_hours.hasFocus()
+        assert wizard.lbl_feedback.text() == ""
 
         row1 = wizard_db.cursor().execute("SELECT cooling_hours FROM inspection_hpge_measurements WHERE inspection_id = ?", (insp_id,)).fetchone()
         assert row1 is None
 
-        # 2. نص غير صالح في جهد سلة NIM
+        # 2. نص غير صالح في جهد سلة NIM مع show_feedback=True
+        warnings_called.clear()
         wizard.edit_cooling_hours.setText("6.5")
         wizard.edit_v_pos_24.setText("invalid_volt")
-        ok2 = wizard.save_draft(show_feedback=False)
+        ok2 = wizard.save_draft(show_feedback=True)
         assert ok2 is False
-        assert "+24 V" in wizard.lbl_feedback.text()
+        assert len(warnings_called) == 1
+        assert warnings_called[0][0] == "تنبيه قبل المتابعة"
+        assert "+24 V" in warnings_called[0][1]
+        assert wizard.edit_v_pos_24.hasFocus()
+        assert wizard.lbl_feedback.text() == ""
 
-        # 3. نص غير صالح في معدل رفع الجهد مع تأكيد الإقرار
+        # 3. نص غير صالح في معدل رفع الجهد مع تأكيد الإقرار مع show_feedback=True
+        warnings_called.clear()
         wizard.edit_v_pos_24.setText("24.0")
         wizard.edit_ramp_rate.setText("bad_rate")
         wizard.chk_ramp_confirm.setChecked(True)
-        ok3 = wizard.save_draft(show_feedback=False)
+        ok3 = wizard.save_draft(show_feedback=True)
         assert ok3 is False
-        assert "معدل رفع الجهد" in wizard.lbl_feedback.text()
+        assert len(warnings_called) == 1
+        assert warnings_called[0][0] == "تنبيه قبل المتابعة"
+        assert "معدل رفع الجهد" in warnings_called[0][1]
+        assert wizard.edit_ramp_rate.hasFocus()
+        assert wizard.lbl_feedback.text() == ""
+
+        # 4. الحفظ التلقائي عند الانتقال (show_feedback=False): لا يكرر نافذة التنبيه ولا يمرر أخطاء لـ lbl_feedback
+        warnings_called.clear()
+        ok4 = wizard.save_draft(show_feedback=False)
+        assert ok4 is False
+        assert len(warnings_called) == 0
+        assert wizard.lbl_feedback.text() == ""
 
     def test_save_draft_feedback_timer_reproduce_deletion_crash(self, wizard_db, tech1_session, qtbot):
         """إعادة إنتاج الخطأ المطلوب في البند 4 قبل الإصلاح."""
@@ -1158,6 +1221,619 @@ class TestHPGeInspectionWizard:
                             lbl_color = w_lbl.palette().color(w_lbl.foregroundRole())
                             cr_f = calc_contrast(lbl_color, card_bg)
                             assert cr_f >= 4.5, f"Field label '{w_lbl.text()}' contrast in {theme} is {cr_f:.2f} < 4.5"
+
+            wizard.close()
+
+    def test_step3_and_step4_no_preselected_values(self, wizard_db, tech1_session, qapp):
+        """التحقق من عدم وجود أي خيارات أو قيم مسبقة في الحقول الإلزامية للخطوتين 3 و 4."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+        wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+
+        # الخطوة 3
+        assert wizard.combo_pz_distortion.currentData() is None
+        assert wizard.edit_shaping_time.text() == ""
+        assert wizard.edit_coarse_gain.text() == ""
+        assert wizard.edit_fine_gain.text() == ""
+        assert wizard.edit_baseline_restorer.text() == ""
+        assert wizard.edit_pole_zero_setting.text() == ""
+        assert wizard.edit_amp_output_amplitude.text() == ""
+
+        # الخطوة 4
+        assert wizard.edit_total_count_rate_cps.text() == ""
+        assert wizard.edit_dead_time_pct.text() == ""
+        assert wizard.edit_live_time_sec.text() == ""
+        assert wizard.edit_p1_centroid.text() == ""
+        assert wizard.edit_p1_fwhm_ch.text() == ""
+        assert wizard.edit_p1_fwtm_ch.text() == ""
+        assert wizard.edit_p1_net_area.text() == ""
+        assert wizard.edit_p2_centroid.text() == ""
+        assert wizard.edit_p2_fwhm_ch.text() == ""
+        assert wizard.edit_p2_fwtm_ch.text() == ""
+        assert wizard.edit_p2_net_area.text() == ""
+        assert wizard.edit_slope_m.text() == ""
+        assert wizard.edit_intercept_b.text() == ""
+        assert wizard.edit_measured_fwhm_kev.text() == ""
+        assert wizard.edit_measured_fwtm_kev.text() == ""
+        assert wizard.edit_form_factor.text() == ""
+        assert wizard.edit_net_counts_1332.text() == ""
+
+    def test_step3_and_step4_missing_mandatory_fields_prevent_transition(self, wizard_db, tech1_session, qapp):
+        """منع العبور عند نقص أي حقل إلزامي في الخطوتين 3 و 4 مع رسالة تسمّي الحقل الناقص."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+        wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+
+        _fill_step_1_valid(wizard)
+        _fill_step_2_valid(wizard)
+
+        # اختبار الخطوة 3: نقص حقل has_pz_distortion
+        wizard.stack.setCurrentIndex(2)
+        ok, msg = wizard._validate_current_step()
+        assert ok is False
+        assert "P/Z" in msg
+
+        # تعبئة الخطوة 3 والانتقال للخطوة 4
+        _fill_step_3_valid(wizard)
+        ok, _ = wizard._validate_current_step()
+        assert ok is True
+
+        # اختبار الخطوة 4: نقص حقول تدريجياً
+        wizard.stack.setCurrentIndex(3)
+        ok, msg = wizard._validate_current_step()
+        assert ok is False
+        assert "معدل النبضات" in msg
+
+        wizard.edit_total_count_rate_cps.setText("1200.0")
+        ok, msg = wizard._validate_current_step()
+        assert ok is False
+        assert "زمن الموت" in msg
+
+        wizard.edit_dead_time_pct.setText("3.0")
+        ok, msg = wizard._validate_current_step()
+        assert ok is False
+        assert "زمن القياس الحي" in msg
+
+        wizard.edit_live_time_sec.setText("300.0")
+        ok, msg = wizard._validate_current_step()
+        assert ok is False
+        assert "1173.2" in msg and "القناة" in msg
+
+    def test_step4_wait_on_r_hpge_11_blocks_step5(self, wizard_db, tech1_session, qapp):
+        """قاعدة R-HPGE-11 تعيد WAIT عند نقص مساحة قمة 1332.5 عن 10,000 نبضة وتمنع الانتقال للخطوة 5."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+        wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+
+        _fill_step_1_valid(wizard)
+        _fill_step_2_valid(wizard)
+        _fill_step_3_valid(wizard)
+        _fill_step_4_valid(wizard)
+
+        wizard.stack.setCurrentIndex(3)
+
+        # جعل مساحة قمة 1332.5 = 7500 نبضة (< 10,000)
+        wizard.edit_p2_net_area.setText("7500.0")
+
+        # التحقق من أن التقييم الحي يعرض لافتة WAIT
+        assert "R-HPGE-11" in wizard.lbl_step4_status.text()
+        assert ("10000" in wizard.lbl_step4_status.text() or "10,000" in wizard.lbl_step4_status.text())
+
+        # التحقق من أن _validate_current_step تمنع المتابعة
+        ok, msg = wizard._validate_current_step()
+        assert ok is False
+        assert "R-HPGE-11" in msg
+        assert ("10000" in msg or "10,000" in msg)
+
+        # محاولة النقر على التالي لا تنتقل للخطوة 5
+        wizard._on_next_step()
+        assert wizard.stack.currentIndex() == 3
+
+    def test_step3_and_step4_out_of_spec_and_failure_allow_transition(self, wizard_db, tech1_session, qapp):
+        """حالات OUT_OF_SPEC و FAILURE في الخطوتين 3 و 4 تظهر بلافتة واضحة وتسمح بالعبور دون توقف مبكر."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+        wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+
+        _fill_step_1_valid(wizard)
+        _fill_step_2_valid(wizard)
+
+        # 1. الخطوة 3: تشوه نبضة P/Z يعطي OUT_OF_SPEC ويسمح بالعبور
+        wizard.stack.setCurrentIndex(2)
+        _fill_step_3_valid(wizard)
+        wizard.combo_pz_distortion.setCurrentIndex(2)  # نعم (يوجد تشوه)
+        assert "R-HPGE-09" in wizard.lbl_step3_status.text()
+        ok, _ = wizard._validate_current_step()
+        assert ok is True
+
+        wizard._on_next_step()
+        assert wizard.stack.currentIndex() == 3
+
+        # 2. الخطوة 4: معدل العد > 2000 (OUT_OF_SPEC) و FWHM > 1.25 * nominal (FAILURE)
+        _fill_step_4_valid(wizard)
+        wizard.edit_total_count_rate_cps.setText("2800.0")  # > 2000 -> R-HPGE-10 OUT_OF_SPEC
+        wizard.edit_p2_fwhm_ch.setText("6.5")  # يعطي FWHM عالي جداً -> FAILURE
+        wizard.edit_p2_fwtm_ch.setText("14.0")  # FWTM > FWHM
+        wizard.edit_p2_net_area.setText("15000.0")  # >= 10000 لتجاوز WAIT
+
+        # اللافتة تحوي التنبيهات
+        assert "R-HPGE-10" in wizard.lbl_step4_status.text()
+        assert "FAILURE" in wizard.lbl_step4_status.text() or "عطل" in wizard.lbl_step4_status.text()
+
+        # التحقق يمر بنجاح لأن OUT_OF_SPEC و FAILURE لا يمنعان الخطوة 4
+        ok, msg = wizard._validate_current_step()
+        assert ok is True
+        assert msg is None
+
+        # الانتقال إلى الخطوة 5
+        wizard._on_next_step()
+        assert wizard.stack.currentIndex() == 4
+
+    def test_step4_calculations_match_core_functions(self, wizard_db, tech1_session, qapp):
+        """التأكد من أن حسابات m و b و FWHM و Form Factor في الواجهة تطابق دوال core على قيم معروفة."""
+        from kashif.core.spectrum import calibrate_co60
+        from kashif.core.physics import fwhm_kev, fwtm_kev, form_factor
+
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+        wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+
+        ch1, ch2 = 2346.4, 2665.0
+        w2, t2 = 3.70, 6.85
+        net_counts = 12500.0
+
+        wizard.edit_p1_centroid.setText(str(ch1))
+        wizard.edit_p1_fwhm_ch.setText("3.60")
+        wizard.edit_p1_fwtm_ch.setText("6.65")
+        wizard.edit_p1_net_area.setText("15000.0")
+
+        wizard.edit_p2_centroid.setText(str(ch2))
+        wizard.edit_p2_fwhm_ch.setText(str(w2))
+        wizard.edit_p2_fwtm_ch.setText(str(t2))
+        wizard.edit_p2_net_area.setText(str(net_counts))
+
+        # حسابات core المرجعية
+        exp_m, exp_b = calibrate_co60(ch1, ch2)
+        exp_fwhm = fwhm_kev(w2, exp_m)
+        exp_fwtm = fwtm_kev(t2, exp_m)
+        exp_ff = form_factor(t2, w2)
+
+        # مقارنة ما تعرضه الحقول المحسوبة
+        assert abs(float(wizard.edit_slope_m.text()) - exp_m) < 1e-5
+        assert abs(float(wizard.edit_intercept_b.text()) - exp_b) < 1e-4
+        assert abs(float(wizard.edit_measured_fwhm_kev.text()) - exp_fwhm) < 1e-3
+        assert abs(float(wizard.edit_measured_fwtm_kev.text()) - exp_fwtm) < 1e-3
+        assert abs(float(wizard.edit_form_factor.text()) - exp_ff) < 1e-3
+        assert float(wizard.edit_net_counts_1332.text()) == net_counts
+
+        # التأكد من أن الحقول للقراءة فقط
+        assert wizard.edit_slope_m.isReadOnly() is True
+        assert wizard.edit_intercept_b.isReadOnly() is True
+        assert wizard.edit_measured_fwhm_kev.isReadOnly() is True
+        assert wizard.edit_form_factor.isReadOnly() is True
+
+    def test_step4_save_peaks_sends_full_list_preserves_first_peak(self, wizard_db, tech1_session, qapp):
+        """التحقق من أن حفظ القمم يرسل القائمة الكاملة دائماً ولا يحذف القمة الأولى عند إدخال الثانية."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+        wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+
+        _fill_step_1_valid(wizard)
+        _fill_step_2_valid(wizard)
+        _fill_step_3_valid(wizard)
+
+        # إدخال القمة الأولى فقط مع زمن القياس
+        wizard.edit_live_time_sec.setText("300.0")
+        wizard.edit_p1_centroid.setText("2346.4")
+        wizard.edit_p1_fwhm_ch.setText("3.60")
+        wizard.edit_p1_fwtm_ch.setText("6.65")
+        wizard.edit_p1_net_area.setText("15000.0")
+
+        # حفظ المسودة
+        assert wizard.save_draft(show_feedback=False) is True
+
+        # التحقق في قاعدة البيانات من وجود قمة واحدة
+        full_1 = service.get_inspection_full(insp_id)
+        assert len(full_1["peaks"]) == 1
+        assert "1173" in full_1["peaks"][0]["peak_name"]
+        assert full_1["peaks"][0]["centroid_channel"] == 2346.4
+
+        # إدخال القمة الثانية في نفس الحوار دون مسح الأولى
+        wizard.edit_p2_centroid.setText("2665.0")
+        wizard.edit_p2_fwhm_ch.setText("3.70")
+        wizard.edit_p2_fwtm_ch.setText("6.85")
+        wizard.edit_p2_net_area.setText("12500.0")
+
+        # حفظ المسودة من جديد
+        assert wizard.save_draft(show_feedback=False) is True
+
+        # التحقق في قاعدة البيانات من حفظ القمتين معاً دون ضياع الأولى
+        full_2 = service.get_inspection_full(insp_id)
+        assert len(full_2["peaks"]) == 2
+        p_names = [p["peak_name"] for p in full_2["peaks"]]
+        assert any("1173" in n for n in p_names)
+        assert any("1332" in n for n in p_names)
+
+    def test_step3_and_step4_draft_lifecycle_save_and_reopen(self, wizard_db, tech1_session, qapp):
+        """دورة حياة المسودة للخطوتين 3 و 4: حفظ البيانات ثم إعادة فتحها وإعادة احتساب الحقول المحسوبة."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+
+        # الجلسة الأولى: إدخال وحفظ
+        wizard1 = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+        _fill_step_1_valid(wizard1)
+        _fill_step_2_valid(wizard1)
+        _fill_step_3_valid(wizard1)
+        _fill_step_4_valid(wizard1)
+
+        assert wizard1.save_draft(show_feedback=False) is True
+        wizard1.close()
+
+        # الجلسة الثانية: إعادة فتح نفس الفحص
+        wizard2 = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+
+        # استرجاع الخطوة 3
+        assert wizard2.edit_shaping_time.text() == "4.0"
+        assert wizard2.edit_coarse_gain.text() == "50.0"
+        assert wizard2.edit_fine_gain.text() == "1.0"
+        assert wizard2.edit_baseline_restorer.text() == "AUTO"
+        assert wizard2.edit_pole_zero_setting.text() == "OPTIMIZED"
+        assert wizard2.edit_amp_output_amplitude.text() == "5.0"
+        assert wizard2.combo_pz_distortion.currentData() == 0
+
+        # استرجاع الخطوة 4
+        assert wizard2.edit_total_count_rate_cps.text() == "1200.0"
+        assert wizard2.edit_dead_time_pct.text() == "3.0"
+        assert wizard2.edit_live_time_sec.text() == "300.0"
+
+        assert wizard2.edit_p1_centroid.text() == "2346.4"
+        assert float(wizard2.edit_p1_fwhm_ch.text()) == 3.60
+        assert wizard2.edit_p2_centroid.text() == "2665.0"
+
+        # الحقول المحسوبة أُعيد احتسابها من المدخلات تلقائياً
+        assert wizard2.edit_slope_m.text() != ""
+        assert abs(float(wizard2.edit_slope_m.text()) - 0.5) < 1e-4
+        assert abs(float(wizard2.edit_measured_fwhm_kev.text()) - 1.85) < 1e-2
+
+        wizard2.close()
+
+    def test_step3_and_step4_read_only_mode_for_non_owner(self, wizard_db, tech1_session, tech2_session, qapp):
+        """فتح مسودة من قبل فني غير المالك يعرض الخطوتين 3 و 4 بمدخلات معطلة للقراءة فقط."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+
+        # حفظ بيانات من المالك
+        w_owner = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+        _fill_step_1_valid(w_owner)
+        _fill_step_2_valid(w_owner)
+        _fill_step_3_valid(w_owner)
+        _fill_step_4_valid(w_owner)
+        assert w_owner.save_draft(show_feedback=False) is True
+        w_owner.close()
+
+        # فتح الفحص بواسطة tech2 (غير المالك)
+        w_viewer = HPGeInspectionWizard(conn=wizard_db, session=tech2_session, inspection_id=insp_id)
+
+        # الخطوة 3 معطلة للقراءة فقط
+        assert w_viewer.edit_shaping_time.isReadOnly() is True
+        assert w_viewer.edit_coarse_gain.isReadOnly() is True
+        assert w_viewer.edit_fine_gain.isReadOnly() is True
+        assert w_viewer.edit_baseline_restorer.isReadOnly() is True
+        assert w_viewer.edit_pole_zero_setting.isReadOnly() is True
+        assert w_viewer.edit_amp_output_amplitude.isReadOnly() is True
+        assert w_viewer.combo_pz_distortion.isEnabled() is False
+
+        # الخطوة 4 معطلة للقراءة فقط
+        assert w_viewer.edit_total_count_rate_cps.isReadOnly() is True
+        assert w_viewer.edit_dead_time_pct.isReadOnly() is True
+        assert w_viewer.edit_live_time_sec.isReadOnly() is True
+        assert w_viewer.edit_p1_centroid.isReadOnly() is True
+        assert w_viewer.edit_p1_fwhm_ch.isReadOnly() is True
+        assert w_viewer.edit_p2_centroid.isReadOnly() is True
+        assert w_viewer.edit_p2_fwhm_ch.isReadOnly() is True
+
+        assert w_viewer.btn_save_draft.isEnabled() is False
+        w_viewer.close()
+
+    def test_step3_and_step4_full_grab_contrast_light_and_dark(self, wizard_db, tech1_session, qapp):
+        """تصوير كامل (Full Grab) لصفحتي 3 و 4 في الوضعين الفاتح والداكن، والتحقق من نسبة التباين >= 4.5."""
+        from kashif.gui.theme import set_mode, get_stylesheet, COLORS
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtWidgets import QFrame, QFormLayout
+        import os
+
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+
+        def rel_lum(c: QColor) -> float:
+            def f(ch):
+                val = ch / 255.0
+                return val / 12.92 if val <= 0.03928 else ((val + 0.055) / 1.055) ** 2.4
+            return 0.2126 * f(c.red()) + 0.7152 * f(c.green()) + 0.0722 * f(c.blue())
+
+        def calc_contrast(c1: QColor, c2: QColor) -> float:
+            l1 = rel_lum(c1)
+            l2 = rel_lum(c2)
+            return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+
+        out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "output", "grab_step3_step4"))
+        os.makedirs(out_dir, exist_ok=True)
+        artifact_dir = r"C:\Users\DELL\.gemini\antigravity\brain\5c0a7800-2b5d-45f4-a075-cc02dc05861d\step3_step4_grabs"
+        os.makedirs(artifact_dir, exist_ok=True)
+
+        for theme in ["light", "dark"]:
+            set_mode(theme)
+            qapp.setStyleSheet(get_stylesheet(theme))
+
+            wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+            wizard.setStyleSheet(get_stylesheet(theme))
+            wizard.resize(920, 760)
+            wizard.show()
+
+            card_bg = QColor(COLORS["dark_card"] if theme == "dark" else COLORS["light_card"])
+
+            # --- فحص الصفحة 3 ---
+            wizard.stack.setCurrentIndex(2)
+            page3 = wizard.stack.widget(2)
+            assert page3 is not None
+
+            img3 = page3.grab().toImage()
+            assert img3.width() > 0 and img3.height() > 0
+            fname3 = f"hpge_wizard_step3_{theme}.png"
+            img3.save(os.path.join(out_dir, fname3))
+            img3.save(os.path.join(artifact_dir, fname3))
+
+            cards_3 = [w for w in page3.findChildren(QFrame) if w.property("class") == "card"]
+            assert len(cards_3) >= 1
+            for fc in cards_3:
+                fl = fc.findChild(QFormLayout)
+                if fl:
+                    for row_i in range(fl.rowCount()):
+                        item = fl.itemAt(row_i, QFormLayout.ItemRole.LabelRole)
+                        if item and item.widget() and isinstance(item.widget(), QLabel):
+                            w_lbl = item.widget()
+                            if not w_lbl.text().strip():
+                                continue
+                            lbl_color = w_lbl.palette().color(w_lbl.foregroundRole())
+                            cr = calc_contrast(lbl_color, card_bg)
+                            assert cr >= 4.5, f"Step 3 label '{w_lbl.text()}' contrast in {theme} is {cr:.2f} < 4.5"
+
+            # --- فحص الصفحة 4 ---
+            wizard.stack.setCurrentIndex(3)
+            page4 = wizard.stack.widget(3)
+            assert page4 is not None
+
+            img4 = page4.grab().toImage()
+            assert img4.width() > 0 and img4.height() > 0
+            fname4 = f"hpge_wizard_step4_{theme}.png"
+            img4.save(os.path.join(out_dir, fname4))
+            img4.save(os.path.join(artifact_dir, fname4))
+
+            cards_4 = [w for w in page4.findChildren(QFrame) if w.property("class") == "card"]
+            assert len(cards_4) >= 1
+            for fc in cards_4:
+                fl = fc.findChild(QFormLayout)
+                if fl:
+                    for row_i in range(fl.rowCount()):
+                        item = fl.itemAt(row_i, QFormLayout.ItemRole.LabelRole)
+                        if item and item.widget() and isinstance(item.widget(), QLabel):
+                            w_lbl = item.widget()
+                            if not w_lbl.text().strip():
+                                continue
+                            lbl_color = w_lbl.palette().color(w_lbl.foregroundRole())
+                            cr = calc_contrast(lbl_color, card_bg)
+                            assert cr >= 4.5, f"Step 4 label '{w_lbl.text()}' contrast in {theme} is {cr:.2f} < 4.5"
+
+            wizard.close()
+
+
+    def test_step3_and_step4_banner_fixed_outside_scroll_area(self, wizard_db, tech1_session, qapp):
+        """اللافتة في الخطوتين 3 و 4 ثابتة فوق منطقة التمرير، وليست من أبناء QScrollArea، وتظل ظاهرة عند التمرير للأسفل."""
+        from PyQt6.QtWidgets import QScrollArea
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+        wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+        wizard.show()
+        qapp.processEvents()
+
+        for step_idx, banner, scroll in [
+            (2, wizard.card_step3_banner, wizard.scroll_step_3),
+            (3, wizard.card_step4_banner, wizard.scroll_step_4),
+        ]:
+            wizard.stack.setCurrentIndex(step_idx)
+            qapp.processEvents()
+
+            # 1. التحقق من سلسلة parent: اللافتة ليست ابناً أو حفيدة لأي QScrollArea
+            p = banner.parent()
+            is_child_of_scroll = False
+            while p is not None:
+                if isinstance(p, QScrollArea):
+                    is_child_of_scroll = True
+                    break
+                p = p.parent()
+            assert is_child_of_scroll is False, f"Banner for step {step_idx + 1} must not be inside any QScrollArea"
+
+            # 2. تمرير منطقة التمرير إلى أقصى الأسفل
+            v_bar = scroll.verticalScrollBar()
+            v_bar.setValue(v_bar.maximum())
+            qapp.processEvents()
+
+            # 3. التحقق من أن اللافتة ظاهرة ومرسومة داخل حدود الحوار
+            assert banner.isVisible() is True
+            top_left = banner.mapTo(wizard, banner.rect().topLeft())
+            bottom_right = banner.mapTo(wizard, banner.rect().bottomRight())
+            wizard_rect = wizard.rect()
+            assert wizard_rect.contains(top_left)
+            assert wizard_rect.contains(bottom_right)
+
+        wizard.close()
+
+    def test_next_step_failure_shows_warning_dialog_and_focuses_first_missing_field(self, wizard_db, tech1_session, monkeypatch, qapp):
+        """فشل زر 'التالي' بحقل ناقص يستدعي QMessageBox.warning بعنوان 'تنبيه قبل المتابعة' ويذكر اسم الحقل ويركز عليه."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+        wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+        wizard.show()
+        qapp.processEvents()
+
+        warnings_called = []
+        def fake_warning(parent, title, text, *args, **kwargs):
+            warnings_called.append((title, text))
+            return QMessageBox.StandardButton.Ok
+        monkeypatch.setattr(QMessageBox, "warning", fake_warning)
+
+        # 1. الخطوة 1: أول حقل ناقص هو نافذة البريليوم
+        wizard.stack.setCurrentIndex(0)
+        wizard.btn_next.click()
+        qapp.processEvents()
+
+        assert len(warnings_called) == 1
+        assert warnings_called[0][0] == "تنبيه قبل المتابعة"
+        assert "نافذة البريليوم" in warnings_called[0][1]
+        assert wizard.combo_window_status.hasFocus()
+
+        # 2. تعبئة نافذة البريليوم والنقر على التالي -> التركيز على مدة التبريد
+        warnings_called.clear()
+        wizard.combo_window_status.setCurrentIndex(1)
+        wizard.btn_next.click()
+        qapp.processEvents()
+
+        assert len(warnings_called) == 1
+        assert warnings_called[0][0] == "تنبيه قبل المتابعة"
+        assert "التبريد" in warnings_called[0][1]
+        assert wizard.edit_cooling_hours.hasFocus()
+
+        # 3. الخطوة 3: حقل تشوه نبضة P/Z ناقص
+        warnings_called.clear()
+        wizard.stack.setCurrentIndex(2)
+        wizard.btn_next.click()
+        qapp.processEvents()
+
+        assert len(warnings_called) == 1
+        assert warnings_called[0][0] == "تنبيه قبل المتابعة"
+        assert "P/Z" in warnings_called[0][1]
+        assert wizard.combo_pz_distortion.hasFocus()
+
+        # 4. الخطوة 4: حقل إجمالي معدل النبضات MCA ناقص
+        warnings_called.clear()
+        wizard.stack.setCurrentIndex(3)
+        wizard.btn_next.click()
+        qapp.processEvents()
+
+        assert len(warnings_called) == 1
+        assert warnings_called[0][0] == "تنبيه قبل المتابعة"
+        assert "معدل النبضات" in warnings_called[0][1]
+        assert wizard.edit_total_count_rate_cps.hasFocus()
+
+        wizard.close()
+
+    def test_save_draft_invalid_fwtm_fwhm_shows_warning_and_does_not_save(self, wizard_db, tech1_session, monkeypatch, qapp):
+        """حفظ كمسودة بإدخال غير صالح (FWTM <= FWHM) يعرض نافذة تنبيه ولا يتم الحفظ."""
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+        wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+        wizard.show()
+        qapp.processEvents()
+
+        warnings_called = []
+        def fake_warning(parent, title, text, *args, **kwargs):
+            warnings_called.append((title, text))
+            return QMessageBox.StandardButton.Ok
+        monkeypatch.setattr(QMessageBox, "warning", fake_warning)
+
+        _fill_step_1_valid(wizard)
+        _fill_step_2_valid(wizard)
+        _fill_step_3_valid(wizard)
+        _fill_step_4_valid(wizard)
+
+        # جعل FWTM <= FWHM في قمة 1332.5 (خطأ فيزيائي)
+        wizard.edit_p2_fwhm_ch.setText("4.00")
+        wizard.edit_p2_fwtm_ch.setText("3.50")
+
+        # النقر على زر حفظ كمسودة
+        wizard.btn_save_draft.click()
+        qapp.processEvents()
+
+        assert len(warnings_called) == 1
+        title, msg = warnings_called[0]
+        assert title == "تنبيه قبل المتابعة"
+        assert "FWTM" in msg or "عُشر الارتفاع" in msg
+        assert wizard.edit_p2_fwtm_ch.hasFocus()
+
+        # التأكد من عدم حفظ القمم بقيم غير صالحة
+        full = service.get_inspection_full(insp_id)
+        assert len(full.get("peaks", [])) == 0
+
+        # التأكد من أن lbl_feedback لم تمرر أي خطأ
+        assert wizard.lbl_feedback.text() == ""
+
+        wizard.close()
+
+    def test_steps_1_to_4_full_grab_contrast_light_and_dark(self, wizard_db, tech1_session, qapp):
+        """تصوير كامل (Full Grab) للحوار للخطوات 1 إلى 4 في الوضعين الفاتح والداكن والتحقق من نسبة التباين >= 4.5:1."""
+        from kashif.gui.theme import set_mode, get_stylesheet, COLORS
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtWidgets import QFrame, QFormLayout
+        import os
+
+        service = InspectionService(wizard_db)
+        insp_id = service.create_draft(detector_id=1, session=tech1_session)
+
+        def rel_lum(c: QColor) -> float:
+            def f(ch):
+                val = ch / 255.0
+                return val / 12.92 if val <= 0.03928 else ((val + 0.055) / 1.055) ** 2.4
+            return 0.2126 * f(c.red()) + 0.7152 * f(c.green()) + 0.0722 * f(c.blue())
+
+        def calc_contrast(c1: QColor, c2: QColor) -> float:
+            l1 = rel_lum(c1)
+            l2 = rel_lum(c2)
+            return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+
+        out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "output", "grab_steps_1_to_4"))
+        os.makedirs(out_dir, exist_ok=True)
+        artifact_dir = "C:/Users/DELL/.gemini/antigravity/brain/5c0a7800-2b5d-45f4-a075-cc02dc05861d/step_grabs_all"
+        os.makedirs(artifact_dir, exist_ok=True)
+
+        for theme in ["light", "dark"]:
+            set_mode(theme)
+            qapp.setStyleSheet(get_stylesheet(theme))
+
+            wizard = HPGeInspectionWizard(conn=wizard_db, session=tech1_session, inspection_id=insp_id)
+            wizard.setStyleSheet(get_stylesheet(theme))
+            wizard.resize(920, 760)
+            wizard.show()
+            qapp.processEvents()
+
+            card_bg = QColor(COLORS["dark_card"] if theme == "dark" else COLORS["light_card"])
+
+            for step_idx in range(4):
+                wizard.stack.setCurrentIndex(step_idx)
+                qapp.processEvents()
+
+                # التقاط صورة كاملة للحوار في الخطوة المحددة
+                img = wizard.grab().toImage()
+                assert img.width() > 0 and img.height() > 0
+                fname = f"hpge_wizard_step{step_idx + 1}_{theme}.png"
+                img.save(os.path.join(out_dir, fname))
+                img.save(os.path.join(artifact_dir, fname))
+
+                # فحص تباين النصوص داخل الصفحة
+                page = wizard.stack.widget(step_idx)
+                assert page is not None
+                cards = [w for w in page.findChildren(QFrame) if w.property("class") == "card"]
+                for fc in cards:
+                    fl = fc.findChild(QFormLayout)
+                    if fl:
+                        for row_i in range(fl.rowCount()):
+                            item = fl.itemAt(row_i, QFormLayout.ItemRole.LabelRole)
+                            if item and item.widget() and isinstance(item.widget(), QLabel):
+                                w_lbl = item.widget()
+                                if not w_lbl.text().strip():
+                                    continue
+                                lbl_color = w_lbl.palette().color(w_lbl.foregroundRole())
+                                cr = calc_contrast(lbl_color, card_bg)
+                                assert cr >= 4.5, f"Step {step_idx + 1} label '{w_lbl.text()}' contrast in {theme} is {cr:.2f} < 4.5"
 
             wizard.close()
 
